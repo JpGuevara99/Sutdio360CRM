@@ -40,13 +40,12 @@ const PAGE_H = 842;
 const MARGIN = 42;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 const COL_IT = 26;
-const COL_UNIT_SIMPLE = 72;
-const COL_QTY_SIMPLE = 72;
-const COL_UNIT_DETAIL = 50;
-const COL_QTY_DETAIL = 46;
+/** Misma geometría en simple y detallado: Unidades/Cant. no “saltan” a la derecha. */
+const COL_UNIT = 50;
+const COL_QTY = 46;
 const COL_PU = 70;
 const COL_TOTAL = 74;
-/** Tipografía tabla: legible y caben ~15 ítems + categorías en 1 página. */
+/** Tipografía tabla (igual en ambas variantes): legible y caben ~15 ítems/página. */
 const SIZE_HEADER = 8.5;
 const SIZE_BODY = 9.5;
 const SIZE_UNIT = 8.5;
@@ -164,23 +163,21 @@ export async function buildQuotePdfBuffer(options: {
   const sinInteres = Boolean(quote.installmentInterestFree) && cuotas > 0;
   const observations = (quote.observations ?? "").trim();
 
-  const colUnit = detailed ? COL_UNIT_DETAIL : COL_UNIT_SIMPLE;
-  const colQty = detailed ? COL_QTY_DETAIL : COL_QTY_SIMPLE;
+  /**
+   * Geometría única: It / Denominación / Unidades / Cant. ocupan los mismos
+   * X en simple y detallado. En simple, P/U+Total quedan como franja vacía a
+   * la derecha (sin el hueco enorme entre nombre y unidades).
+   */
   const colName =
-    CONTENT_W -
-    COL_IT -
-    colUnit -
-    colQty -
-    (detailed ? COL_PU + COL_TOTAL : 0);
-
-  /** Bordes izquierdos de cada columna (alineación estable header ↔ filas). */
+    CONTENT_W - COL_IT - COL_UNIT - COL_QTY - COL_PU - COL_TOTAL;
   const xIt = MARGIN;
   const xName = MARGIN + COL_IT;
   const xUnit = xName + colName;
-  const xQty = xUnit + colUnit;
-  const xPu = detailed ? xQty + colQty : xQty;
-  const xTotal = detailed ? xPu + COL_PU : xQty + colQty;
-  const rightEdge = MARGIN + CONTENT_W;
+  const xQty = xUnit + COL_UNIT;
+  const xPu = xQty + COL_QTY;
+  const xTotal = xPu + COL_PU;
+  /** Ancho de cabecera/líneas: en simple corta al final de Cant. */
+  const tableW = detailed ? CONTENT_W : COL_IT + colName + COL_UNIT + COL_QTY;
 
   let page = pdf.addPage([PAGE_W, PAGE_H]);
   let y = PAGE_H - MARGIN;
@@ -315,15 +312,15 @@ export async function buildQuotePdfBuffer(options: {
     page.drawRectangle({
       x: MARGIN,
       y: y - 17,
-      width: CONTENT_W,
+      width: tableW,
       height: 19,
       color: headerBg,
     });
     const hy = y - 12;
     drawCenterIn("It.", xIt, COL_IT, hy, SIZE_HEADER, true, rgb(1, 1, 1));
     drawLeft("DENOMINACION", xName + 2, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    drawCenterIn("UNIDADES", xUnit, colUnit, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    drawCenterIn("CANT.", xQty, colQty, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    drawCenterIn("UNIDADES", xUnit, COL_UNIT, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    drawCenterIn("CANT.", xQty, COL_QTY, hy, SIZE_HEADER, true, rgb(1, 1, 1));
     if (detailed) {
       drawCenterIn("P/U", xPu, COL_PU, hy, SIZE_HEADER, true, rgb(1, 1, 1));
       drawCenterIn("TOTAL", xTotal, COL_TOTAL, hy, SIZE_HEADER, true, rgb(1, 1, 1));
@@ -434,7 +431,7 @@ export async function buildQuotePdfBuffer(options: {
     page.drawRectangle({
       x: MARGIN,
       y: y - CAT_H + 2,
-      width: CONTENT_W,
+      width: tableW,
       height: CAT_H,
       color: categoryBg,
     });
@@ -442,7 +439,7 @@ export async function buildQuotePdfBuffer(options: {
     /** Título de categoría alineado con Denominación (sin escalón vs. desgloses). */
     const catMaxW = detailed
       ? xTotal - (xName + 2) - 8
-      : CONTENT_W - COL_IT - 10;
+      : xUnit - (xName + 2) - 8;
     const catLabel = clipText(
       fontBold,
       group.categoryName.toUpperCase(),
@@ -468,7 +465,7 @@ export async function buildQuotePdfBuffer(options: {
       const rowY = y - 4;
       page.drawLine({
         start: { x: MARGIN, y: rowY - 7 },
-        end: { x: rightEdge, y: rowY - 7 },
+        end: { x: MARGIN + tableW, y: rowY - 7 },
         thickness: 0.35,
         color: line,
       });
@@ -484,7 +481,7 @@ export async function buildQuotePdfBuffer(options: {
       drawCenterIn(
         shortUnit(quoteLine.unit),
         xUnit,
-        colUnit,
+        COL_UNIT,
         rowY,
         SIZE_UNIT,
         false,
@@ -493,7 +490,7 @@ export async function buildQuotePdfBuffer(options: {
       drawCenterIn(
         formatQty(quoteLine.quantity),
         xQty,
-        colQty,
+        COL_QTY,
         rowY,
         SIZE_BODY,
         false,
@@ -536,7 +533,7 @@ export async function buildQuotePdfBuffer(options: {
   const endMatterH = 58 + obsBlockH + bannerH + footerReserve + 20;
   ensureEndMatterSpace(endMatterH);
 
-  const totalsX = MARGIN + CONTENT_W - 220;
+  const totalsX = MARGIN + tableW - 220;
   const totalsW = 220;
   const drawTotalRow = (
     label: string,

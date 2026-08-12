@@ -197,8 +197,18 @@ body {
   }
 
   .quote-print-table {
-    width: 100% !important;
     border-collapse: collapse !important;
+  }
+
+  /* El PDF simple usa ~72% de ancho; no forzar 100% sobre el contenedor. */
+  .quote-print-table-wrap {
+    width: 72% !important;
+  }
+  .quote-print-table-wrap-full {
+    width: 100% !important;
+  }
+  .quote-print-totals-simple {
+    margin-right: 28% !important;
   }
 
   .quote-print-group,

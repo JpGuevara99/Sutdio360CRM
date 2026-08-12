@@ -267,25 +267,25 @@ export function QuotePrintView({
           {quote.title}
         </h1>
 
-        <table className="quote-print-table w-full table-fixed border-collapse text-[13.5px] leading-none">
+        <table className="quote-print-table w-full table-fixed border-collapse text-[12.5px] leading-[20px]">
           <thead>
-            <tr className="bg-neutral-800 text-left text-[12px] font-semibold uppercase tracking-wide text-white">
-              <th className="w-10 px-1.5 py-2 text-left align-middle">It.</th>
-              <th className="px-2 py-2 align-middle">Denominación</th>
+            <tr className="bg-neutral-800 text-left text-[11px] font-semibold uppercase tracking-wide text-white">
+              <th className="w-10 px-1.5 py-2.5 align-middle">It.</th>
+              <th className="px-2 py-2.5 align-middle">Denominación</th>
               <th
-                className={`${detailed ? "w-[4.5rem]" : "w-[5.5rem]"} px-1.5 py-2 text-left align-middle`}
+                className={`${detailed ? "w-[4.5rem]" : "w-[5.5rem]"} px-1.5 py-2.5 align-middle`}
               >
                 Unidades
               </th>
               <th
-                className={`${detailed ? "w-14 text-left" : "w-[5.5rem] text-left"} px-1.5 py-2 align-middle`}
+                className={`${detailed ? "w-14" : "w-[5.5rem]"} px-1.5 py-2.5 align-middle`}
               >
                 {detailed ? "Cant." : "Cantidad"}
               </th>
               {detailed ? (
                 <>
-                  <th className="w-24 px-2 py-2 text-right align-middle">P/U</th>
-                  <th className="w-28 px-2 py-2 text-right align-middle">Total</th>
+                  <th className="w-24 px-2 py-2.5 text-right align-middle">P/U</th>
+                  <th className="w-28 px-2 py-2.5 text-right align-middle">Total</th>
                 </>
               ) : null}
             </tr>
@@ -485,16 +485,18 @@ function SimpleGroupRows({
       {lines.map((line, offset) => (
         <tr
           key={line.id}
-          className="quote-print-row border-b border-neutral-200"
+          className="quote-print-row border-b border-neutral-300"
         >
-          <td className="px-1.5 py-1.5 text-left align-middle tabular-nums text-neutral-500">
+          <td className="h-[20px] px-1.5 py-0 align-middle tabular-nums leading-[20px] text-neutral-500">
             {startIndex + offset + 1}
           </td>
-          <td className="px-2 py-1.5 align-middle">{line.name}</td>
-          <td className="px-1.5 py-1.5 text-center align-middle text-neutral-700">
+          <td className="h-[20px] px-2 py-0 align-middle leading-[20px]">
+            {line.name}
+          </td>
+          <td className="h-[20px] px-1.5 py-0 text-center align-middle leading-[20px] text-neutral-700">
             {shortUnit(line.unit)}
           </td>
-          <td className="px-1.5 py-1.5 text-right align-middle tabular-nums">
+          <td className="h-[20px] px-1.5 py-0 text-right align-middle tabular-nums leading-[20px]">
             {formatQty(line.quantity)}
           </td>
         </tr>
@@ -534,22 +536,24 @@ function DetailedGroupRows({
       {lines.map((line, offset) => (
         <tr
           key={line.id}
-          className="quote-print-row border-b border-neutral-200"
+          className="quote-print-row border-b border-neutral-300"
         >
-          <td className="px-1.5 py-1.5 text-left align-middle tabular-nums text-neutral-500">
+          <td className="h-[20px] px-1.5 py-0 align-middle tabular-nums leading-[20px] text-neutral-500">
             {startIndex + offset + 1}
           </td>
-          <td className="px-2 py-1.5 align-middle">{line.name}</td>
-          <td className="px-1.5 py-1.5 text-center align-middle text-neutral-700">
+          <td className="h-[20px] px-2 py-0 align-middle leading-[20px]">
+            {line.name}
+          </td>
+          <td className="h-[20px] px-1.5 py-0 text-center align-middle leading-[20px] text-neutral-700">
             {shortUnit(line.unit)}
           </td>
-          <td className="px-1.5 py-1.5 text-right align-middle tabular-nums">
+          <td className="h-[20px] px-1.5 py-0 text-right align-middle tabular-nums leading-[20px]">
             {formatQty(line.quantity)}
           </td>
-          <td className="px-2 py-1.5 text-right align-middle tabular-nums">
+          <td className="h-[20px] px-2 py-0 text-right align-middle tabular-nums leading-[20px]">
             {formatClp(line.unitPrice)}
           </td>
-          <td className="px-2 py-1.5 text-right align-middle tabular-nums font-medium">
+          <td className="h-[20px] px-2 py-0 text-right align-middle tabular-nums font-medium leading-[20px]">
             {formatClp(line.lineTotal)}
           </td>
         </tr>

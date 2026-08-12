@@ -50,9 +50,16 @@ const COL_TOTAL = 74;
 const SIZE_HEADER = 8;
 const SIZE_BODY = 9;
 const SIZE_CAT = 8;
-const ROW_STEP = 16;
+/** Alto de fila entre separadores (~15 ítems/página con categorías). */
+const ROW_STEP = 20;
 const CAT_H = 18;
 const HEADER_H = 20;
+/**
+ * Distancia de la baseline al borde inferior de la fila.
+ * Deja aire similar arriba (hasta el tope de mayúsculas) y abajo (hasta el trazo).
+ */
+const BASELINE_FROM_BOTTOM = 7;
+const CAT_BASELINE_FROM_BOTTOM = 6;
 
 const ink = rgb(0.12, 0.12, 0.12);
 const muted = rgb(0.42, 0.42, 0.42);
@@ -440,14 +447,16 @@ export async function buildQuotePdfBuffer(options: {
 
   for (const group of renderGroups) {
     ensureSpace(CAT_H + ROW_STEP + 4);
+    const catBottom = y - CAT_H;
     page.drawRectangle({
       x: MARGIN,
-      y: y - CAT_H + 2,
+      y: catBottom,
       width: CONTENT_W,
       height: CAT_H,
       color: categoryBg,
     });
-    const catY = y - 10;
+    // Texto de categoría centrado en la franja gris.
+    const catY = catBottom + CAT_BASELINE_FROM_BOTTOM;
     const catMaxW = detailed
       ? xTotal - (MARGIN + 6) - 8
       : CONTENT_W - 12;
@@ -457,7 +466,6 @@ export async function buildQuotePdfBuffer(options: {
       SIZE_CAT,
       catMaxW,
     );
-    // Categoría al borde izquierdo (como el PDF de referencia).
     drawLeft(catLabel, MARGIN + 6, catY, SIZE_CAT, true, ink);
     if (detailed && group.categorySubtotal != null) {
       drawRightIn(
@@ -470,19 +478,21 @@ export async function buildQuotePdfBuffer(options: {
         ink,
       );
     }
-    y -= CAT_H;
+    y = catBottom;
 
     for (const quoteLine of group.lines) {
       ensureSpace(ROW_STEP + 2);
-      const rowY = y - 4;
+      const rowBottom = y - ROW_STEP;
+      // Separador en el borde inferior de la fila.
       page.drawLine({
-        start: { x: MARGIN, y: rowY - 7 },
-        end: { x: rightEdge, y: rowY - 7 },
-        thickness: 0.4,
+        start: { x: MARGIN, y: rowBottom },
+        end: { x: rightEdge, y: rowBottom },
+        thickness: 0.75,
         color: line,
       });
-      // Misma línea base para It. / nombre / unidad / cantidad.
-      drawLeft(String(item), MARGIN + 6, rowY, SIZE_BODY, false, muted);
+      // Una sola línea base para It./nombre/Ud/cant, con padding pareja vs. separadores.
+      const rowY = rowBottom + BASELINE_FROM_BOTTOM;
+      drawLeft(String(item), MARGIN + 6, rowY, SIZE_BODY, false, ink);
       drawLeft(
         clipText(font, quoteLine.name, SIZE_BODY, colName - 10),
         xName + 6,
@@ -533,7 +543,7 @@ export async function buildQuotePdfBuffer(options: {
           ink,
         );
       }
-      y -= ROW_STEP;
+      y = rowBottom;
       item += 1;
     }
   }

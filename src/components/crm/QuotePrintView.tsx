@@ -477,7 +477,7 @@ function SimpleGroupRows({
       <tr className="quote-print-group">
         <td
           colSpan={4}
-          className="bg-neutral-200 px-1.5 py-1.5 align-middle text-[13px] font-semibold uppercase tracking-wide text-neutral-700"
+          className="bg-neutral-200 px-1.5 py-1.5 align-middle text-[13px] font-bold uppercase tracking-wide text-black"
         >
           {categoryName}
         </td>
@@ -525,11 +525,11 @@ function DetailedGroupRows({
       <tr className="quote-print-group">
         <td
           colSpan={colSpan - 1}
-          className="bg-neutral-200 px-1.5 py-1.5 align-middle text-[13px] font-semibold uppercase tracking-wide text-neutral-700"
+          className="bg-neutral-200 px-1.5 py-1.5 align-middle text-[13px] font-bold uppercase tracking-wide text-black"
         >
           {categoryName}
         </td>
-        <td className="bg-neutral-200 px-2 py-1.5 text-right align-middle text-[13px] font-semibold tabular-nums text-neutral-800">
+        <td className="bg-neutral-200 px-2 py-1.5 text-right align-middle text-[13px] font-bold tabular-nums text-black">
           {formatClp(subtotal)}
         </td>
       </tr>

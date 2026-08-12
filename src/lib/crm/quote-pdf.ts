@@ -49,7 +49,9 @@ const COL_PU = 70;
 const COL_TOTAL = 74;
 const SIZE_HEADER = 8;
 const SIZE_BODY = 9;
-const SIZE_CAT = 8;
+/** Categorías un poco más grandes/oscuras (peso visual del PDF 0044). */
+const SIZE_CAT = 9;
+const categoryInk = rgb(0, 0, 0);
 /** Alto de fila entre separadores (~15 ítems/página con categorías). */
 const ROW_STEP = 20;
 const CAT_H = 18;
@@ -59,7 +61,7 @@ const HEADER_H = 20;
  * Deja aire similar arriba (hasta el tope de mayúsculas) y abajo (hasta el trazo).
  */
 const BASELINE_FROM_BOTTOM = 7;
-const CAT_BASELINE_FROM_BOTTOM = 6;
+const CAT_BASELINE_FROM_BOTTOM = 7;
 
 const ink = rgb(0.12, 0.12, 0.12);
 const muted = rgb(0.42, 0.42, 0.42);
@@ -466,16 +468,16 @@ export async function buildQuotePdfBuffer(options: {
       SIZE_CAT,
       catMaxW,
     );
-    drawLeft(catLabel, MARGIN + 6, catY, SIZE_CAT, true, ink);
+    drawLeft(catLabel, MARGIN + 6, catY, SIZE_CAT, true, categoryInk);
     if (detailed && group.categorySubtotal != null) {
       drawRightIn(
         formatClp(group.categorySubtotal),
         xTotal,
         COL_TOTAL,
         catY,
-        SIZE_BODY,
+        SIZE_CAT,
         true,
-        ink,
+        categoryInk,
       );
     }
     y = catBottom;

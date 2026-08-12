@@ -107,7 +107,6 @@ export function QuotePrintView({
   const observations = (quote.observations ?? "").trim();
   const showObservations =
     quote.showObservations !== false && observations.length > 0;
-  const colSpan = detailed ? 6 : 4;
 
   async function downloadPdf() {
     setDownloading(true);
@@ -268,67 +267,54 @@ export function QuotePrintView({
           {quote.title}
         </h1>
 
-        <div
-          className={
-            detailed
-              ? "quote-print-table-wrap-full w-full"
-              : "quote-print-table-wrap w-[72%]"
-          }
-        >
-          <table className="quote-print-table w-full table-fixed border-collapse text-[13.5px] leading-snug">
-            <thead>
-              <tr className="bg-neutral-800 text-left text-[12px] font-semibold uppercase tracking-wide text-white">
-                <th className="w-10 px-1.5 py-2 text-center">It.</th>
-                <th className="px-2 py-2">Denominación</th>
-                <th className="w-[4.5rem] px-1.5 py-2 text-center">Unidades</th>
-                <th className="w-14 px-1.5 py-2 text-center">Cant.</th>
-                {detailed ? (
-                  <>
-                    <th className="w-24 px-2 py-2 text-right">P/U</th>
-                    <th className="w-28 px-2 py-2 text-right">Total</th>
-                  </>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody>
-              {detailed
-                ? pricedGroups.map((group) => {
-                    const startIndex = itemIndex;
-                    itemIndex += group.lines.length;
-                    return (
-                      <DetailedGroupRows
-                        key={group.categoryName}
-                        categoryName={group.categoryName}
-                        lines={group.lines}
-                        subtotal={group.subtotal}
-                        startIndex={startIndex}
-                        colSpan={colSpan}
-                      />
-                    );
-                  })
-                : simpleGroups.map((group) => {
-                    const startIndex = itemIndex;
-                    itemIndex += group.lines.length;
-                    return (
-                      <SimpleGroupRows
-                        key={group.categoryName}
-                        categoryName={group.categoryName}
-                        lines={group.lines}
-                        startIndex={startIndex}
-                        colSpan={colSpan}
-                      />
-                    );
-                  })}
-            </tbody>
-          </table>
-        </div>
+        <table className="quote-print-table w-full table-fixed border-collapse text-[13.5px] leading-snug">
+          <thead>
+            <tr className="bg-neutral-800 text-left text-[12px] font-semibold uppercase tracking-wide text-white">
+              <th className="w-10 px-1.5 py-2 text-center">It.</th>
+              <th className="px-2 py-2">Denominación</th>
+              <th className="w-[4.5rem] px-1.5 py-2 text-center">Unidades</th>
+              <th className="w-14 px-1.5 py-2 text-center">Cant.</th>
+              {detailed ? (
+                <>
+                  <th className="w-24 px-2 py-2 text-right">P/U</th>
+                  <th className="w-28 px-2 py-2 text-right">Total</th>
+                </>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody>
+            {detailed
+              ? pricedGroups.map((group) => {
+                  const startIndex = itemIndex;
+                  itemIndex += group.lines.length;
+                  return (
+                    <DetailedGroupRows
+                      key={group.categoryName}
+                      categoryName={group.categoryName}
+                      lines={group.lines}
+                      subtotal={group.subtotal}
+                      startIndex={startIndex}
+                      colSpan={6}
+                    />
+                  );
+                })
+              : simpleGroups.map((group) => {
+                  const startIndex = itemIndex;
+                  itemIndex += group.lines.length;
+                  return (
+                    <SimpleGroupRows
+                      key={group.categoryName}
+                      categoryName={group.categoryName}
+                      lines={group.lines}
+                      startIndex={startIndex}
+                    />
+                  );
+                })}
+          </tbody>
+        </table>
 
         <div className="quote-print-end mt-6">
-          <div
-            className={`ml-auto w-full max-w-xs text-sm ${
-              detailed ? "" : "quote-print-totals-simple mr-[28%]"
-            }`}
-          >
+          <div className="ml-auto w-full max-w-xs text-sm">
             <div className="flex justify-between gap-4 border-b border-neutral-200 px-3 py-2">
               <span className="font-medium text-neutral-600">SUBTOTAL NETO</span>
               <span className="tabular-nums font-medium">
@@ -473,12 +459,10 @@ function SimpleGroupRows({
   categoryName,
   lines,
   startIndex,
-  colSpan,
 }: {
   categoryName: string;
   lines: QuoteLine[];
   startIndex: number;
-  colSpan: number;
 }) {
   return (
     <>
@@ -487,7 +471,7 @@ function SimpleGroupRows({
           &nbsp;
         </td>
         <td
-          colSpan={colSpan - 1}
+          colSpan={3}
           className="bg-neutral-200 px-2 py-1.5 text-[13px] font-semibold uppercase tracking-wide text-neutral-700"
         >
           {categoryName}

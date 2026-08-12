@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Vercel + Next 16.3: `standalone` rompe el build (ENOENT next-server.js.nft.json).
+  // En Docker/Cloud Run/Firebase App Hosting sí conviene standalone.
+  ...(process.env.VERCEL ? {} : { output: "standalone" as const }),
   serverExternalPackages: ["firebase-admin", "googleapis"],
   // Permite abrir el CRM en tablet/móvil por IP local en desarrollo
   allowedDevOrigins: [

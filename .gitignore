@@ -1,0 +1,59 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+*.p12
+*.key
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Environment / secrets — NUNCA subir al repo
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# Service account / key dumps (por si se descargan en la carpeta del proyecto)
+*firebase-adminsdk*.json
+*service-account*.json
+*-credentials.json
+secrets/
+.keys/
+
+# vercel / firebase local
+.vercel
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# local fallback store (when Firebase Admin is not configured)
+.data/

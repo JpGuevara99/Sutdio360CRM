@@ -1,0 +1,112 @@
+# Firebase App Hosting — Studio360 CRM
+# https://firebase.google.com/docs/app-hosting/configure
+#
+# Los secretos se crean con:
+#   firebase apphosting:secrets:set NOMBRE
+# (no pongas valores reales en este archivo)
+
+runConfig:
+  runtime: nodejs22
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 10
+
+env:
+  - variable: NODE_ENV
+    value: production
+    availability:
+      - BUILD
+      - RUNTIME
+
+  # URL pública de la app (cámbiala tras el primer deploy a la URL real de App Hosting)
+  - variable: NEXT_PUBLIC_APP_URL
+    secret: NEXT_PUBLIC_APP_URL
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: ALLOWED_EMAIL_DOMAINS
+    secret: ALLOWED_EMAIL_DOMAINS
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    secret: NEXT_PUBLIC_FIREBASE_API_KEY
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    secret: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    secret: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    secret: NEXT_PUBLIC_FIREBASE_APP_ID
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: FIREBASE_PROJECT_ID
+    secret: FIREBASE_PROJECT_ID
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: FIREBASE_CLIENT_EMAIL
+    secret: FIREBASE_CLIENT_EMAIL
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: FIREBASE_PRIVATE_KEY
+    secret: FIREBASE_PRIVATE_KEY
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: GOOGLE_SERVICE_ACCOUNT_EMAIL
+    secret: GOOGLE_SERVICE_ACCOUNT_EMAIL
+    availability:
+      - RUNTIME
+
+  - variable: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+    secret: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+    availability:
+      - RUNTIME
+
+  - variable: GOOGLE_WORKSPACE_IMPERSONATE_EMAIL
+    secret: GOOGLE_WORKSPACE_IMPERSONATE_EMAIL
+    availability:
+      - RUNTIME
+
+  - variable: GOOGLE_CALENDAR_ID
+    secret: GOOGLE_CALENDAR_ID
+    availability:
+      - RUNTIME
+
+  - variable: GOOGLE_DRIVE_ROOT_FOLDER_ID
+    secret: GOOGLE_DRIVE_ROOT_FOLDER_ID
+    availability:
+      - RUNTIME
+
+  - variable: CRON_SECRET
+    secret: CRON_SECRET
+    availability:
+      - RUNTIME
+
+  - variable: CRM_USE_LOCAL_DB
+    value: "0"
+    availability:
+      - BUILD
+      - RUNTIME

@@ -212,9 +212,16 @@ body {
     page-break-inside: avoid;
   }
 
-  .quote-print-table td,
-  .quote-print-table th {
-    padding-top: 0.2rem !important;
-    padding-bottom: 0.2rem !important;
+  .quote-print-table th,
+  .quote-print-table td {
+    padding-top: 0.25rem !important;
+    padding-bottom: 0.25rem !important;
+    vertical-align: middle !important;
+    line-height: 1.25 !important;
+  }
+
+  .quote-print-row td {
+    /* Evita que It./Unidades/Cant. “floten” respecto a Denominación al imprimir */
+    vertical-align: middle !important;
   }
 }

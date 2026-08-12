@@ -267,17 +267,19 @@ export function QuotePrintView({
           {quote.title}
         </h1>
 
-        <table className="quote-print-table w-full table-fixed border-collapse text-[13.5px] leading-snug">
+        <table className="quote-print-table w-full table-fixed border-collapse text-[13.5px] leading-none">
           <thead>
             <tr className="bg-neutral-800 text-left text-[12px] font-semibold uppercase tracking-wide text-white">
-              <th className="w-10 px-1.5 py-2 text-center">It.</th>
-              <th className="px-2 py-2">Denominación</th>
-              <th className="w-[4.5rem] px-1.5 py-2 text-center">Unidades</th>
-              <th className="w-14 px-1.5 py-2 text-center">Cant.</th>
+              <th className="w-10 px-1.5 py-2 text-center align-middle">It.</th>
+              <th className="px-2 py-2 align-middle">Denominación</th>
+              <th className="w-[4.5rem] px-1.5 py-2 text-center align-middle">
+                Unidades
+              </th>
+              <th className="w-14 px-1.5 py-2 text-center align-middle">Cant.</th>
               {detailed ? (
                 <>
-                  <th className="w-24 px-2 py-2 text-right">P/U</th>
-                  <th className="w-28 px-2 py-2 text-right">Total</th>
+                  <th className="w-24 px-2 py-2 text-right align-middle">P/U</th>
+                  <th className="w-28 px-2 py-2 text-right align-middle">Total</th>
                 </>
               ) : null}
             </tr>
@@ -467,12 +469,12 @@ function SimpleGroupRows({
   return (
     <>
       <tr className="quote-print-group">
-        <td className="w-10 bg-neutral-200 px-1.5 py-1.5" aria-hidden>
+        <td className="w-10 bg-neutral-200 px-1.5 py-1.5 align-middle" aria-hidden>
           &nbsp;
         </td>
         <td
           colSpan={3}
-          className="bg-neutral-200 px-2 py-1.5 text-[13px] font-semibold uppercase tracking-wide text-neutral-700"
+          className="bg-neutral-200 px-2 py-1.5 align-middle text-[13px] font-semibold uppercase tracking-wide text-neutral-700"
         >
           {categoryName}
         </td>
@@ -482,14 +484,14 @@ function SimpleGroupRows({
           key={line.id}
           className="quote-print-row border-b border-neutral-200"
         >
-          <td className="px-1.5 py-1.5 text-center text-neutral-500">
+          <td className="px-1.5 py-1.5 text-center align-middle tabular-nums text-neutral-500">
             {startIndex + offset + 1}
           </td>
-          <td className="px-2 py-1.5">{line.name}</td>
-          <td className="px-1.5 py-1.5 text-center text-neutral-600">
+          <td className="px-2 py-1.5 align-middle">{line.name}</td>
+          <td className="px-1.5 py-1.5 text-center align-middle text-neutral-700">
             {shortUnit(line.unit)}
           </td>
-          <td className="px-1.5 py-1.5 text-center tabular-nums">
+          <td className="px-1.5 py-1.5 text-center align-middle tabular-nums">
             {formatQty(line.quantity)}
           </td>
         </tr>
@@ -516,16 +518,16 @@ function DetailedGroupRows({
   return (
     <>
       <tr className="quote-print-group">
-        <td className="w-10 bg-neutral-200 px-1.5 py-1.5" aria-hidden>
+        <td className="w-10 bg-neutral-200 px-1.5 py-1.5 align-middle" aria-hidden>
           &nbsp;
         </td>
         <td
           colSpan={colSpan - 2}
-          className="bg-neutral-200 px-2 py-1.5 text-[13px] font-semibold uppercase tracking-wide text-neutral-700"
+          className="bg-neutral-200 px-2 py-1.5 align-middle text-[13px] font-semibold uppercase tracking-wide text-neutral-700"
         >
           {categoryName}
         </td>
-        <td className="bg-neutral-200 px-2 py-1.5 text-right text-[13px] font-semibold tabular-nums text-neutral-800">
+        <td className="bg-neutral-200 px-2 py-1.5 text-right align-middle text-[13px] font-semibold tabular-nums text-neutral-800">
           {formatClp(subtotal)}
         </td>
       </tr>
@@ -534,20 +536,20 @@ function DetailedGroupRows({
           key={line.id}
           className="quote-print-row border-b border-neutral-200"
         >
-          <td className="px-1.5 py-1.5 text-center text-neutral-500">
+          <td className="px-1.5 py-1.5 text-center align-middle tabular-nums text-neutral-500">
             {startIndex + offset + 1}
           </td>
-          <td className="px-2 py-1.5">{line.name}</td>
-          <td className="px-1.5 py-1.5 text-center text-neutral-600">
+          <td className="px-2 py-1.5 align-middle">{line.name}</td>
+          <td className="px-1.5 py-1.5 text-center align-middle text-neutral-700">
             {shortUnit(line.unit)}
           </td>
-          <td className="px-1.5 py-1.5 text-center tabular-nums">
+          <td className="px-1.5 py-1.5 text-center align-middle tabular-nums">
             {formatQty(line.quantity)}
           </td>
-          <td className="px-2 py-1.5 text-right tabular-nums">
+          <td className="px-2 py-1.5 text-right align-middle tabular-nums">
             {formatClp(line.unitPrice)}
           </td>
-          <td className="px-2 py-1.5 text-right tabular-nums font-medium">
+          <td className="px-2 py-1.5 text-right align-middle tabular-nums font-medium">
             {formatClp(line.lineTotal)}
           </td>
         </tr>

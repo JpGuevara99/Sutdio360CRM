@@ -39,17 +39,20 @@ const PAGE_W = 595;
 const PAGE_H = 842;
 const MARGIN = 42;
 const CONTENT_W = PAGE_W - MARGIN * 2;
-const COL_IT = 26;
-/** Misma geometría en simple y detallado: Unidades/Cant. no “saltan” a la derecha. */
-const COL_UNIT = 50;
-const COL_QTY = 46;
+/** Geometría del PDF de referencia (Presupuesto-P-06-20260812-0044). */
+const COL_IT = 28;
+const COL_UNIT_SIMPLE = 72;
+const COL_QTY_SIMPLE = 72;
+const COL_UNIT_DETAIL = 50;
+const COL_QTY_DETAIL = 46;
 const COL_PU = 70;
 const COL_TOTAL = 74;
-/** Tipografía tabla (igual en ambas variantes): legible y caben ~15 ítems/página. */
-const SIZE_HEADER = 8.5;
-const SIZE_BODY = 9.5;
-const ROW_STEP = 15;
-const CAT_H = 16;
+const SIZE_HEADER = 8;
+const SIZE_BODY = 9;
+const SIZE_CAT = 8;
+const ROW_STEP = 16;
+const CAT_H = 18;
+const HEADER_H = 20;
 
 const ink = rgb(0.12, 0.12, 0.12);
 const muted = rgb(0.42, 0.42, 0.42);
@@ -163,18 +166,24 @@ export async function buildQuotePdfBuffer(options: {
   const observations = (quote.observations ?? "").trim();
 
   /**
-   * Detallado: It/Name/Unit/Qty/P/U/Total a ancho completo.
-   * Simple: Name ocupa el hueco de P/U+Total; Unidades/Cant. van al borde
-   * derecho (alineados con totales y banner), sin franja negra vacía.
+   * Layout de referencia:
+   * - Simple: It | Denominación | Unidades(72) | Cantidad(72)
+   * - Detallado: + P/U + Total (columnas más angostas)
+   * It. y categorías a la izquierda; Cantidad/P/U/Total a la derecha.
    */
-  const colName = detailed
-    ? CONTENT_W - COL_IT - COL_UNIT - COL_QTY - COL_PU - COL_TOTAL
-    : CONTENT_W - COL_IT - COL_UNIT - COL_QTY;
+  const colUnit = detailed ? COL_UNIT_DETAIL : COL_UNIT_SIMPLE;
+  const colQty = detailed ? COL_QTY_DETAIL : COL_QTY_SIMPLE;
+  const colName =
+    CONTENT_W -
+    COL_IT -
+    colUnit -
+    colQty -
+    (detailed ? COL_PU + COL_TOTAL : 0);
   const xIt = MARGIN;
   const xName = MARGIN + COL_IT;
   const xUnit = xName + colName;
-  const xQty = xUnit + COL_UNIT;
-  const xPu = xQty + COL_QTY;
+  const xQty = xUnit + colUnit;
+  const xPu = xQty + colQty;
   const xTotal = xPu + COL_PU;
   const rightEdge = MARGIN + CONTENT_W;
 
@@ -210,7 +219,8 @@ export async function buildQuotePdfBuffer(options: {
     const f = useBold ? fontBold : font;
     const w = f.widthOfTextAtSize(text, size);
     page.drawText(text, {
-      x: colLeft + colWidth - 4 - w,
+      // Padding 8 como en el PDF de referencia (cantidad “1” en x≈540).
+      x: colLeft + colWidth - 8 - w,
       y: atY,
       size,
       font: f,
@@ -310,22 +320,24 @@ export async function buildQuotePdfBuffer(options: {
   const drawTableHeader = () => {
     page.drawRectangle({
       x: MARGIN,
-      y: y - 17,
+      y: y - HEADER_H + 2,
       width: CONTENT_W,
-      height: 19,
+      height: HEADER_H,
       color: headerBg,
     });
     const hy = y - 12;
-    drawCenterIn("It.", xIt, COL_IT, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    drawLeft("DENOMINACION", xName + 2, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    drawCenterIn("UNIDADES", xUnit, COL_UNIT, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    drawCenterIn("CANT.", xQty, COL_QTY, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    // Misma lógica que el PDF de referencia (0044): offsets fijos, no centrado forzado.
+    drawLeft("It.", MARGIN + 6, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    drawLeft("DENOMINACION", xName + 6, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    drawLeft("UNIDADES", xUnit + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
     if (detailed) {
-      // Misma alineación que los montos (derecha), evita el “escalón” header↔valor.
+      drawLeft("CANT.", xQty + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
       drawRightIn("P/U", xPu, COL_PU, hy, SIZE_HEADER, true, rgb(1, 1, 1));
       drawRightIn("TOTAL", xTotal, COL_TOTAL, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    } else {
+      drawLeft("CANTIDAD", xQty + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
     }
-    y -= 19;
+    y -= HEADER_H;
   };
 
   if (logo) {
@@ -436,17 +448,17 @@ export async function buildQuotePdfBuffer(options: {
       color: categoryBg,
     });
     const catY = y - 10;
-    /** Título de categoría alineado con Denominación (sin escalón vs. desgloses). */
     const catMaxW = detailed
-      ? xTotal - (xName + 2) - 8
-      : xQty + COL_QTY - (xName + 2) - 8;
+      ? xTotal - (MARGIN + 6) - 8
+      : CONTENT_W - 12;
     const catLabel = clipText(
       fontBold,
       group.categoryName.toUpperCase(),
-      SIZE_BODY,
+      SIZE_CAT,
       catMaxW,
     );
-    drawLeft(catLabel, xName + 2, catY, SIZE_BODY, true, ink);
+    // Categoría al borde izquierdo (como el PDF de referencia).
+    drawLeft(catLabel, MARGIN + 6, catY, SIZE_CAT, true, ink);
     if (detailed && group.categorySubtotal != null) {
       drawRightIn(
         formatClp(group.categorySubtotal),
@@ -466,13 +478,14 @@ export async function buildQuotePdfBuffer(options: {
       page.drawLine({
         start: { x: MARGIN, y: rowY - 7 },
         end: { x: rightEdge, y: rowY - 7 },
-        thickness: 0.35,
+        thickness: 0.4,
         color: line,
       });
-      drawCenterIn(String(item), xIt, COL_IT, rowY, SIZE_BODY, false, muted);
+      // Misma línea base para It. / nombre / unidad / cantidad.
+      drawLeft(String(item), MARGIN + 6, rowY, SIZE_BODY, false, muted);
       drawLeft(
-        clipText(font, quoteLine.name, SIZE_BODY, colName - 8),
-        xName + 2,
+        clipText(font, quoteLine.name, SIZE_BODY, colName - 10),
+        xName + 6,
         rowY,
         SIZE_BODY,
         false,
@@ -481,16 +494,16 @@ export async function buildQuotePdfBuffer(options: {
       drawCenterIn(
         shortUnit(quoteLine.unit),
         xUnit,
-        COL_UNIT,
+        colUnit,
         rowY,
         SIZE_BODY,
         false,
         muted,
       );
-      drawCenterIn(
+      drawRightIn(
         formatQty(quoteLine.quantity),
         xQty,
-        COL_QTY,
+        colQty,
         rowY,
         SIZE_BODY,
         false,

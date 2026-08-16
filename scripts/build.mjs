@@ -18,7 +18,7 @@ console.log(`[build] next version: ${pkg.dependencies?.next ?? "unknown"}`);
 const require = createRequire(import.meta.url);
 const nextCli = require.resolve("next/dist/bin/next");
 
-const result = spawnSync(process.execPath, [nextCli, "build"], {
+const result = spawnSync(process.execPath, [nextCli, "build", "--webpack"], {
   stdio: "inherit",
   env: process.env,
 });

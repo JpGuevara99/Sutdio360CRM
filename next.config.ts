@@ -7,6 +7,11 @@ const firebaseAuthDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
   ? `https://${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}`
   : "https://*.firebaseapp.com";
 
+/** Sede real de los archivos de login de Firebase (`/__/auth/...`). */
+const firebaseHostingOrigin = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
+  ? `https://${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`
+  : "https://studio360-crm.firebaseapp.com";
+
 /**
  * Content-Security-Policy: limita de dónde puede cargar el navegador. Si algún
  * día se cuela un script malicioso, esto impide que se ejecute o que envíe
@@ -23,8 +28,8 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://*.googleusercontent.com https://*.google.com",
   "font-src 'self' data:",
-  `connect-src 'self' blob: https://*.googleapis.com https://accounts.google.com ${firebaseAuthDomain}${isDev ? " ws: wss:" : ""}`,
-  `frame-src 'self' blob: https://accounts.google.com https://apis.google.com ${firebaseAuthDomain}`,
+  `connect-src 'self' blob: https://*.googleapis.com https://accounts.google.com https://*.firebaseapp.com ${firebaseAuthDomain}${isDev ? " ws: wss:" : ""}`,
+  `frame-src 'self' blob: https://accounts.google.com https://apis.google.com https://*.firebaseapp.com ${firebaseAuthDomain}`,
   "worker-src 'self' blob:",
   "media-src 'self' blob:",
   "object-src 'none'",
@@ -71,7 +76,21 @@ const nextConfig: NextConfig = {
     "192.168.0.101",
   ],
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      // El helper de Google vive en /__/auth; no le apliques la CSP de la app.
+      {
+        source: "/((?!__/auth/).*)",
+        headers: securityHeaders,
+      },
+    ];
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/__/auth/:path*",
+        destination: `${firebaseHostingOrigin}/__/auth/:path*`,
+      },
+    ];
   },
 };
 

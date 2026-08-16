@@ -6,24 +6,24 @@ import {
 } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { readEnv } from "@/lib/env";
 
 function getPrivateKey(): string | undefined {
-  const key = process.env.FIREBASE_PRIVATE_KEY;
-  return key?.replace(/\\n/g, "\n");
+  return readEnv("FIREBASE_PRIVATE_KEY")?.replace(/\\n/g, "\n");
 }
 
 /** Fuerza repo local (.data/store.json) aunque Admin esté configurado. */
 export function forceLocalDb(): boolean {
-  const flag = process.env.CRM_USE_LOCAL_DB?.trim().toLowerCase();
+  const flag = readEnv("CRM_USE_LOCAL_DB")?.toLowerCase();
   return flag === "1" || flag === "true" || flag === "yes";
 }
 
 export function isFirebaseAdminConfigured(): boolean {
   if (forceLocalDb()) return false;
   return Boolean(
-    process.env.FIREBASE_PROJECT_ID &&
-      process.env.FIREBASE_CLIENT_EMAIL &&
-      process.env.FIREBASE_PRIVATE_KEY,
+    readEnv("FIREBASE_PROJECT_ID") &&
+      readEnv("FIREBASE_CLIENT_EMAIL") &&
+      readEnv("FIREBASE_PRIVATE_KEY"),
   );
 }
 
@@ -38,8 +38,8 @@ function getAdminApp(): App {
       getApps()[0] ??
       initializeApp({
         credential: cert({
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          projectId: readEnv("FIREBASE_PROJECT_ID"),
+          clientEmail: readEnv("FIREBASE_CLIENT_EMAIL"),
           privateKey: getPrivateKey(),
         }),
       });

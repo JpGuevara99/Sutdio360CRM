@@ -2,9 +2,20 @@ import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV !== "production";
 
+function env(name: string): string | undefined {
+  let value = process.env[name]?.trim();
+  if (!value) return undefined;
+  const quoted =
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"));
+  if (quoted && value.length >= 2) value = value.slice(1, -1).trim();
+  return value || undefined;
+}
+
 /** Dominio de Firebase Auth (popup de Google) para permitirlo en la CSP. */
-const firebaseAuthDomain = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
-  ? `https://${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`
+const firebaseProjectId = env("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
+const firebaseAuthDomain = firebaseProjectId
+  ? `https://${firebaseProjectId}.firebaseapp.com`
   : "https://*.firebaseapp.com";
 
 /**

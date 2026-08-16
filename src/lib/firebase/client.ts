@@ -1,10 +1,11 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
+import { readEnv } from "@/lib/env";
 
 function firebaseAuthDomain(): string | undefined {
-  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+  const projectId = readEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
   if (projectId) return `${projectId}.firebaseapp.com`;
-  const configured = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim();
+  const configured = readEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN");
   if (
     configured?.endsWith(".firebaseapp.com") ||
     configured?.endsWith(".web.app")
@@ -16,10 +17,10 @@ function firebaseAuthDomain(): string | undefined {
 
 function getFirebaseConfig() {
   return {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    apiKey: readEnv("NEXT_PUBLIC_FIREBASE_API_KEY"),
     authDomain: firebaseAuthDomain(),
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+    projectId: readEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
+    appId: readEnv("NEXT_PUBLIC_FIREBASE_APP_ID"),
   };
 }
 

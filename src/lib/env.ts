@@ -1,8 +1,25 @@
+/**
+ * Lee una variable de entorno sin comillas ni espacios de más.
+ * En Vercel a veces se pega el valor como `"studio360-crm"` y el popup
+ * de Google termina en un dominio que no existe.
+ */
+export function readEnv(name: string): string | undefined {
+  let value = process.env[name]?.trim();
+  if (!value) return undefined;
+  const quoted =
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"));
+  if (quoted && value.length >= 2) {
+    value = value.slice(1, -1).trim();
+  }
+  return value || undefined;
+}
+
 export function getAllowedEmailDomains(): string[] {
-  const raw = process.env.ALLOWED_EMAIL_DOMAINS ?? "";
+  const raw = readEnv("ALLOWED_EMAIL_DOMAINS") ?? "";
   return raw
     .split(",")
-    .map((d) => d.trim().toLowerCase())
+    .map((d) => d.trim().toLowerCase().replace(/^["']|["']$/g, ""))
     .filter(Boolean);
 }
 
@@ -23,17 +40,17 @@ export function isEmailAllowed(email: string): boolean {
  * es la dueña del Drive y del calendario.
  */
 export function getAdminEmails(): string[] {
-  const emails = (process.env.ADMIN_EMAILS ?? "")
+  const emails = (readEnv("ADMIN_EMAILS") ?? "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
 
-  const owner = process.env.GOOGLE_WORKSPACE_IMPERSONATE_EMAIL?.trim().toLowerCase();
+  const owner = readEnv("GOOGLE_WORKSPACE_IMPERSONATE_EMAIL")?.toLowerCase();
   if (owner && !emails.includes(owner)) emails.push(owner);
 
   return emails;
 }
 
 export function getAppUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  return readEnv("NEXT_PUBLIC_APP_URL") ?? "http://localhost:3000";
 }

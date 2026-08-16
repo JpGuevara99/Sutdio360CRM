@@ -1,11 +1,12 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
-import { readEnv } from "@/lib/env";
+import { stripQuotes } from "@/lib/env";
 
 function firebaseAuthDomain(): string | undefined {
-  const projectId = readEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
+  // Acceso estático: Next solo inyecta NEXT_PUBLIC_* en el navegador así.
+  const projectId = stripQuotes(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
   if (projectId) return `${projectId}.firebaseapp.com`;
-  const configured = readEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN");
+  const configured = stripQuotes(process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN);
   if (
     configured?.endsWith(".firebaseapp.com") ||
     configured?.endsWith(".web.app")
@@ -17,10 +18,10 @@ function firebaseAuthDomain(): string | undefined {
 
 function getFirebaseConfig() {
   return {
-    apiKey: readEnv("NEXT_PUBLIC_FIREBASE_API_KEY"),
+    apiKey: stripQuotes(process.env.NEXT_PUBLIC_FIREBASE_API_KEY),
     authDomain: firebaseAuthDomain(),
-    projectId: readEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
-    appId: readEnv("NEXT_PUBLIC_FIREBASE_APP_ID"),
+    projectId: stripQuotes(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID),
+    appId: stripQuotes(process.env.NEXT_PUBLIC_FIREBASE_APP_ID),
   };
 }
 

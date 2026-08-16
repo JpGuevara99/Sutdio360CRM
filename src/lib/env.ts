@@ -1,18 +1,22 @@
 /**
- * Lee una variable de entorno sin comillas ni espacios de más.
- * En Vercel a veces se pega el valor como `"studio360-crm"` y el popup
- * de Google termina en un dominio que no existe.
+ * Quita comillas envolventes. En Vercel a veces se pega el valor como
+ * `"studio360-crm"` y el popup de Google termina en un dominio que no existe.
  */
-export function readEnv(name: string): string | undefined {
-  let value = process.env[name]?.trim();
+export function stripQuotes(value: string | undefined): string | undefined {
   if (!value) return undefined;
+  let trimmed = value.trim();
   const quoted =
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"));
-  if (quoted && value.length >= 2) {
-    value = value.slice(1, -1).trim();
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"));
+  if (quoted && trimmed.length >= 2) {
+    trimmed = trimmed.slice(1, -1).trim();
   }
-  return value || undefined;
+  return trimmed || undefined;
+}
+
+/** Lee una variable de entorno sin comillas ni espacios de más. */
+export function readEnv(name: string): string | undefined {
+  return stripQuotes(process.env[name]);
 }
 
 export function getAllowedEmailDomains(): string[] {

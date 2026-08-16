@@ -4,6 +4,10 @@ import { TopBar } from "@/components/crm/TopBar";
 import { PageBody } from "@/components/crm/PageBody";
 import { StatusBadge } from "@/components/crm/StatusBadge";
 import { ClientEditForm } from "@/components/crm/ClientEditForm";
+import { ClientMergeFromDetail } from "@/components/crm/ClientMergeFromDetail";
+import { DeleteEntityAction } from "@/components/crm/DeleteEntityAction";
+import { NewProjectButton } from "@/components/crm/NewProjectButton";
+import { requirePageSession } from "@/lib/auth/require-page-session";
 import { ensureClientDriveFolder } from "@/lib/crm/drive-sync";
 import { clientFullName } from "@/lib/crm/labels";
 import { formatEntityCode } from "@/lib/crm/project-codes";
@@ -16,6 +20,8 @@ export default async function ClientDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const session = await requirePageSession();
+  const isAdmin = session.role === "ADMIN";
   let client = await db.getClientWithProjects(id);
   if (!client) notFound();
 
@@ -37,31 +43,45 @@ export default async function ClientDetailPage({
             <h2 className="text-lg font-medium text-foreground">
               {formatEntityCode(client.leadCode)}
             </h2>
-            {client.driveFolderUrl ? (
-              <a
-                href={client.driveFolderUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition hover:border-primary hover:bg-primary-soft/40"
-              >
-                <GoogleDriveIcon />
-                <span className="font-medium">Abrir carpeta en Drive</span>
-              </a>
-            ) : (
-              <p className="text-xs text-muted">
-                La carpeta Drive se crea al sincronizar un proyecto
-              </p>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {isAdmin ? (
+                <ClientMergeFromDetail currentClientId={client.id} />
+              ) : null}
+              {client.driveFolderUrl ? (
+                <a
+                  href={client.driveFolderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition hover:border-primary hover:bg-primary-soft/40"
+                >
+                  <GoogleDriveIcon />
+                  <span className="font-medium">Abrir carpeta en Drive</span>
+                </a>
+              ) : (
+                <p className="text-xs text-muted">
+                  La carpeta Drive se crea al sincronizar un proyecto
+                </p>
+              )}
+            </div>
           </div>
           <ClientEditForm client={client} />
         </section>
 
         <section className="rounded-xl border border-border bg-surface">
-          <div className="border-b border-border px-5 py-4">
-            <h3 className="text-sm font-medium text-foreground">Proyectos</h3>
-            <p className="mt-0.5 text-xs text-muted">
-              Cada proyecto tiene su carpeta dentro de la del cliente en Drive
-            </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div>
+              <h3 className="text-sm font-medium text-foreground">Proyectos</h3>
+              <p className="mt-0.5 text-xs text-muted">
+                Cada proyecto tiene su carpeta dentro de la del cliente en Drive
+              </p>
+            </div>
+            <NewProjectButton
+              size="sm"
+              lockedClient={{
+                id: client.id,
+                label: `${formatEntityCode(client.leadCode)} · ${clientFullName(client)}`,
+              }}
+            />
           </div>
           {client.projects.length === 0 ? (
             <p className="px-5 py-8 text-sm text-muted">Sin proyectos aún</p>
@@ -88,6 +108,33 @@ export default async function ClientDetailPage({
             </ul>
           )}
         </section>
+
+        {client.deletedAt ? (
+          <section className="rounded-xl border border-[#d93025]/40 bg-[#d93025]/5 p-4">
+            <p className="text-sm text-[#d93025]">
+              Este cliente está en la Papelera de Reciclaje. Restáuralo desde{" "}
+              <Link href="/papelera" className="underline">
+                Papelera de Reciclaje
+              </Link>
+              .
+            </p>
+          </section>
+        ) : isAdmin ? (
+          <div className="flex justify-end pb-2">
+            <DeleteEntityAction
+              kind="client"
+              id={client.id}
+              label={formatEntityCode(client.leadCode)}
+              extraWarning={
+                client.projectCount > 0
+                  ? `Se enviarán también sus ${client.projectCount} proyecto${
+                      client.projectCount === 1 ? "" : "s"
+                    }.`
+                  : undefined
+              }
+            />
+          </div>
+        ) : null}
       </PageBody>
     </>
   );

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { requireApiSession } from "@/lib/auth/api-session";
+import { recordAudit } from "@/lib/crm/audit";
+import { trashProject } from "@/lib/crm/trash";
 import { db } from "@/lib/db";
 
 const updateSchema = z.object({
@@ -11,6 +14,7 @@ const updateSchema = z.object({
       "COTIZADO",
       "SEGUIMIENTO",
       "APROBADO",
+      "RECHAZADO",
       "PRODUCCION",
       "INSTALACION",
       "GARANTIA",
@@ -96,6 +100,39 @@ export async function PATCH(
           error instanceof Error
             ? error.message
             : "No se pudo actualizar el proyecto",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+/** Envía el proyecto a la papelera de reciclaje (30 días). */
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireApiSession(request);
+  if (!auth.ok) return auth.response;
+
+  const { id } = await context.params;
+
+  try {
+    await trashProject(id);
+    await recordAudit({
+      action: "PROJECT_TRASH",
+      actorEmail: auth.session.email,
+      target: id,
+      detail: "Proyecto enviado a la papelera",
+    });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("DELETE /api/projects/[id] failed", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo eliminar el proyecto",
       },
       { status: 500 },
     );

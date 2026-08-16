@@ -4,6 +4,7 @@ import { PageBody } from "@/components/crm/PageBody";
 import { QuotePrintView } from "@/components/crm/QuotePrintView";
 import { formatEntityCode } from "@/lib/crm/project-codes";
 import { parseQuoteVariant } from "@/lib/crm/quote-priced-lines";
+import { requirePageSession } from "@/lib/auth/require-page-session";
 import { db } from "@/lib/db";
 
 export default async function QuotePreviewPage({
@@ -17,6 +18,8 @@ export default async function QuotePreviewPage({
   const { from, variant: variantParam } = await searchParams;
   const entryFrom = from === "cotizador" ? "cotizador" : "proyecto";
   const variant = parseQuoteVariant(variantParam);
+
+  await requirePageSession();
 
   const [project, quote, company] = await Promise.all([
     db.getProjectById(id),

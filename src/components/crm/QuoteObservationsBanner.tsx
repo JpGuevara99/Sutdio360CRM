@@ -19,7 +19,7 @@ export function QuoteObservationsBanner({
   const showBadge = installmentInterestFree && cuotas > 0;
 
   return (
-    <section className="mt-8 border-y border-neutral-300 text-sm text-black">
+    <section className="mt-4 border-y border-neutral-300 text-sm text-black">
       <div className="grid grid-cols-1 divide-y divide-neutral-200 md:grid-cols-3 md:divide-x md:divide-y-0 md:divide-neutral-300">
         {/* Garantía */}
         <div className="px-3 py-3.5 md:px-4">

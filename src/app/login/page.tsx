@@ -74,7 +74,7 @@ export default function LoginPage() {
           </button>
         ) : null}
 
-        {(!configured || isLan || process.env.NODE_ENV === "development") && (
+        {process.env.NODE_ENV === "development" && (
           <div className={configured ? "mt-3 space-y-3" : "space-y-3"}>
             {!configured ? (
               <p className="rounded-lg bg-[#fef7e0] px-3 py-2 text-sm text-[#b06000]">

@@ -78,7 +78,9 @@ export async function POST(
 
   const stamp = formatInTimeZone(new Date(), TZ, "yyyyMMdd-HHmm");
   const suffix = variant === "detailed" ? "detallado" : "sin-detalles";
-  const fileName = `Presupuesto-${formatEntityCode(project.publicCode)}-${suffix}-${stamp}.pdf`;
+  const fileName = quote.quoteCode
+    ? `Cotizacion-${quote.quoteCode}-${suffix}-${stamp}.pdf`
+    : `Presupuesto-${formatEntityCode(project.publicCode)}-${suffix}-${stamp}.pdf`;
 
   const uploaded = await uploadFileToFolder({
     folderId: project.driveFolderId,

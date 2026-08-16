@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { requireApiSession } from "@/lib/auth/api-session";
+import { recordAudit } from "@/lib/crm/audit";
 import { db } from "@/lib/db";
 import {
   communesForRegion,
@@ -32,10 +34,8 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const session = await getSessionFromRequest(request);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireApiSession(request, { admin: true });
+  if (!auth.ok) return auth.response;
 
   const parsed = patchSchema.safeParse(await request.json());
   if (!parsed.success) {
@@ -69,6 +69,12 @@ export async function PATCH(request: Request) {
   const settings = await db.updateCompanySettings({
     commercialAddress,
     phone: parsed.data.phone,
+  });
+  await recordAudit({
+    action: "SETTINGS_UPDATE",
+    actorEmail: auth.session.email,
+    target: "company",
+    detail: "Datos comerciales de la empresa actualizados",
   });
   return NextResponse.json({ settings });
 }

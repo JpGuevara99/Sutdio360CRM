@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { requireApiSession } from "@/lib/auth/api-session";
+import { recordAudit } from "@/lib/crm/audit";
+import { trashClient } from "@/lib/crm/trash";
 import { db } from "@/lib/db";
 
 const updateSchema = z.object({
@@ -72,4 +75,38 @@ export async function PATCH(
   });
 
   return NextResponse.json({ client });
+}
+
+/** Envía el cliente y todos sus proyectos a la papelera de reciclaje. */
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  // Eliminar un cliente arrastra todos sus proyectos a la papelera.
+  const auth = await requireApiSession(request, { admin: true });
+  if (!auth.ok) return auth.response;
+
+  const { id } = await context.params;
+
+  try {
+    await trashClient(id);
+    await recordAudit({
+      action: "CLIENT_TRASH",
+      actorEmail: auth.session.email,
+      target: id,
+      detail: "Cliente y sus proyectos enviados a la papelera",
+    });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("DELETE /api/clients/[id] failed", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo eliminar el cliente",
+      },
+      { status: 500 },
+    );
+  }
 }

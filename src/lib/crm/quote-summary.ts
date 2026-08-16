@@ -1,4 +1,5 @@
-import type { QuoteLine } from "@/lib/crm/types";
+import type { QuoteCosts, QuoteLine } from "@/lib/crm/types";
+import { QUOTE_IVA_RATE } from "@/lib/crm/types";
 import { groupQuoteLinesByCategory } from "@/lib/crm/quote-groups";
 
 export const LABOR_CATEGORY = "Mano de Obra";
@@ -28,7 +29,13 @@ export type QuoteSummary = {
   subtotalNeto: number;
   /** Subtotal neto menos descuento */
   totalNeto: number;
-  /** Alias de totalNeto (total final al cliente) */
+  /** Si se incluye IVA en el documento */
+  includeIva: boolean;
+  /** IVA 19% sobre total neto (0 si no se incluye) */
+  ivaAmount: number;
+  /** Total neto + IVA (igual a totalNeto si no hay IVA) */
+  totalConIva: number;
+  /** Alias del total final al cliente (con IVA si aplica) */
   total: number;
 };
 
@@ -62,12 +69,14 @@ export function percentsFromQuote(quote: {
   utilidadPercent?: number;
   extraPercent?: number;
   discountPercent?: number;
-}): QuotePercents {
+  includeIva?: boolean;
+}): QuotePercents & { includeIva: boolean } {
   return {
     mermaPercent: quote.mermaPercent ?? 0,
     utilidadPercent: quote.utilidadPercent ?? 0,
     extraPercent: quote.extraPercent ?? 0,
     discountPercent: quote.discountPercent ?? 0,
+    includeIva: Boolean(quote.includeIva),
   };
 }
 
@@ -77,9 +86,66 @@ export function formatPercent(value: number) {
   })}%`;
 }
 
+/** Costos por tipo (mano de obra, logística, materiales) de un set de líneas. */
+export function quoteCostsFromLines(lines: QuoteLine[]): QuoteCosts {
+  const groups = groupQuoteLinesByCategory(lines);
+  let labor = 0;
+  let logistics = 0;
+  let materials = 0;
+
+  for (const group of groups) {
+    if (isLaborCategory(group.categoryName)) labor += group.subtotal;
+    else if (isLogisticsCategory(group.categoryName))
+      logistics += group.subtotal;
+    else materials += group.subtotal;
+  }
+
+  return { labor, logistics, materials };
+}
+
+export type QuoteTotals = {
+  subtotalNeto: number;
+  totalNeto: number;
+  includeIva: boolean;
+  ivaAmount: number;
+  totalConIva: number;
+};
+
+/**
+ * Totales a partir de los costos guardados en la cotización, sin leer líneas.
+ */
+export function buildQuoteTotals(
+  costs: QuoteCosts,
+  percents: QuotePercents & { includeIva?: boolean },
+): QuoteTotals {
+  const mermaPercent = clampPercent(percents.mermaPercent);
+  const utilidadPercent = clampPercent(percents.utilidadPercent);
+  const extraPercent = clampPercent(percents.extraPercent);
+
+  const mermaAmount = roundClp(costs.materials * (mermaPercent / 100));
+  const utilidadBase = costs.labor + costs.logistics + costs.materials;
+  const utilidadAmount = roundClp(utilidadBase * (utilidadPercent / 100));
+  const extraBase = utilidadBase + mermaAmount + utilidadAmount;
+  const extraAmount = roundClp(extraBase * (extraPercent / 100));
+  const subtotalNeto = extraBase + extraAmount;
+  const discountPercent = clampPercent(percents.discountPercent, 100);
+  const discountAmount = roundClp(subtotalNeto * (discountPercent / 100));
+  const totalNeto = Math.max(0, subtotalNeto - discountAmount);
+  const includeIva = Boolean(percents.includeIva);
+  const ivaAmount = includeIva ? roundClp(totalNeto * QUOTE_IVA_RATE) : 0;
+
+  return {
+    subtotalNeto,
+    totalNeto,
+    includeIva,
+    ivaAmount,
+    totalConIva: totalNeto + ivaAmount,
+  };
+}
+
 export function buildQuoteSummary(
   lines: QuoteLine[],
-  percents: QuotePercents,
+  percents: QuotePercents & { includeIva?: boolean },
 ): QuoteSummary {
   const groups = groupQuoteLinesByCategory(lines);
   let labor = 0;
@@ -116,6 +182,9 @@ export function buildQuoteSummary(
   const discountPercent = clampPercent(percents.discountPercent, 100);
   const discountAmount = roundClp(subtotalNeto * (discountPercent / 100));
   const totalNeto = Math.max(0, subtotalNeto - discountAmount);
+  const includeIva = Boolean(percents.includeIva);
+  const ivaAmount = includeIva ? roundClp(totalNeto * QUOTE_IVA_RATE) : 0;
+  const totalConIva = totalNeto + ivaAmount;
 
   return {
     labor,
@@ -132,6 +201,9 @@ export function buildQuoteSummary(
     discountAmount,
     subtotalNeto,
     totalNeto,
-    total: totalNeto,
+    includeIva,
+    ivaAmount,
+    totalConIva,
+    total: totalConIva,
   };
 }

@@ -25,6 +25,12 @@ export async function POST(request: Request) {
   if (!body.csv || typeof body.csv !== "string") {
     return NextResponse.json({ error: "CSV vacío" }, { status: 400 });
   }
+  if (body.csv.length > 2_000_000) {
+    return NextResponse.json(
+      { error: "El CSV es demasiado grande (máximo 2 MB)" },
+      { status: 413 },
+    );
+  }
 
   const rows = parseCsv(body.csv);
   if (rows.length < 2) {

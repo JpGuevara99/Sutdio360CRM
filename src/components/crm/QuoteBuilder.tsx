@@ -16,9 +16,14 @@ import type {
   Material,
   MaterialCategory,
   Project,
+  QuoteCommercialStatus,
   QuoteLine,
   QuoteWithLines,
 } from "@/lib/crm/types";
+import {
+  QUOTE_COMMERCIAL_STATUS_LABELS,
+  quoteCommercialStatusClass,
+} from "@/lib/crm/quote-commercial-status";
 
 const TZ = "America/Santiago";
 
@@ -74,6 +79,12 @@ export function QuoteBuilder({
   const [discountPercent, setDiscountPercent] = useState(
     initialQuote.discountPercent ?? 0,
   );
+  const [includeIva, setIncludeIva] = useState(
+    Boolean(initialQuote.includeIva),
+  );
+  const [commercialStatus, setCommercialStatus] = useState<QuoteCommercialStatus>(
+    initialQuote.commercialStatus ?? "NONE",
+  );
   const [warrantyMonths, setWarrantyMonths] = useState(
     initialQuote.warrantyMonths ?? 0,
   );
@@ -94,12 +105,15 @@ export function QuoteBuilder({
     utilidadPercent: initialQuote.utilidadPercent ?? 0,
     extraPercent: initialQuote.extraPercent ?? 0,
     discountPercent: initialQuote.discountPercent ?? 0,
+    includeIva: Boolean(initialQuote.includeIva),
     warrantyMonths: initialQuote.warrantyMonths ?? 0,
     installmentCount: initialQuote.installmentCount ?? 0,
     installmentInterestFree: Boolean(initialQuote.installmentInterestFree),
     observations: initialQuote.observations ?? "",
     showObservations: initialQuote.showObservations !== false,
   });
+  const [persistedCommercialStatus, setPersistedCommercialStatus] =
+    useState<QuoteCommercialStatus>(initialQuote.commercialStatus ?? "NONE");
   const allowLeaveRef = useRef(false);
 
   const dirty = useMemo(() => {
@@ -112,6 +126,7 @@ export function QuoteBuilder({
     if (utilidadPercent !== persistedMeta.utilidadPercent) return true;
     if (extraPercent !== persistedMeta.extraPercent) return true;
     if (discountPercent !== persistedMeta.discountPercent) return true;
+    if (includeIva !== persistedMeta.includeIva) return true;
     if (warrantyMonths !== persistedMeta.warrantyMonths) return true;
     if (installmentCount !== persistedMeta.installmentCount) return true;
     if (installmentInterestFree !== persistedMeta.installmentInterestFree) {
@@ -119,6 +134,7 @@ export function QuoteBuilder({
     }
     if (observations !== persistedMeta.observations) return true;
     if (showObservations !== persistedMeta.showObservations) return true;
+    if (commercialStatus !== persistedCommercialStatus) return true;
     return false;
   }, [
     title,
@@ -129,11 +145,14 @@ export function QuoteBuilder({
     utilidadPercent,
     extraPercent,
     discountPercent,
+    includeIva,
     warrantyMonths,
     installmentCount,
     installmentInterestFree,
     observations,
     showObservations,
+    commercialStatus,
+    persistedCommercialStatus,
     persistedMeta,
   ]);
 
@@ -177,6 +196,7 @@ export function QuoteBuilder({
         utilidadPercent,
         extraPercent,
         discountPercent,
+        includeIva,
       }),
     [
       quote.lines,
@@ -184,6 +204,7 @@ export function QuoteBuilder({
       utilidadPercent,
       extraPercent,
       discountPercent,
+      includeIva,
     ],
   );
 
@@ -209,6 +230,7 @@ export function QuoteBuilder({
     utilidadPercent?: number;
     extraPercent?: number;
     discountPercent?: number;
+    includeIva?: boolean;
     warrantyMonths?: number;
     installmentCount?: number;
     installmentInterestFree?: boolean;
@@ -220,6 +242,7 @@ export function QuoteBuilder({
       utilidadPercent: overrides?.utilidadPercent ?? utilidadPercent,
       extraPercent: overrides?.extraPercent ?? extraPercent,
       discountPercent: overrides?.discountPercent ?? discountPercent,
+      includeIva: overrides?.includeIva ?? includeIva,
       warrantyMonths: overrides?.warrantyMonths ?? warrantyMonths,
       installmentCount: overrides?.installmentCount ?? installmentCount,
       installmentInterestFree:
@@ -232,6 +255,7 @@ export function QuoteBuilder({
       next.utilidadPercent === persistedMeta.utilidadPercent &&
       next.extraPercent === persistedMeta.extraPercent &&
       next.discountPercent === persistedMeta.discountPercent &&
+      next.includeIva === persistedMeta.includeIva &&
       next.warrantyMonths === persistedMeta.warrantyMonths &&
       next.installmentCount === persistedMeta.installmentCount &&
       next.installmentInterestFree === persistedMeta.installmentInterestFree &&
@@ -252,6 +276,25 @@ export function QuoteBuilder({
     setPersistedMeta(next);
     setQuote((q) => ({ ...q, ...next }));
     return true;
+  }
+
+  async function saveCommercialStatus(
+    next: QuoteCommercialStatus,
+  ): Promise<void> {
+    setCommercialStatus(next);
+    if (next === persistedCommercialStatus) return;
+    const res = await fetch(`/api/quotes/${quote.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commercialStatus: next }),
+    });
+    if (!res.ok) {
+      setError("No se pudo actualizar el estado comercial");
+      setCommercialStatus(persistedCommercialStatus);
+      return;
+    }
+    setPersistedCommercialStatus(next);
+    setQuote((q) => ({ ...q, commercialStatus: next }));
   }
 
   async function saveTitle(): Promise<boolean> {
@@ -440,8 +483,18 @@ export function QuoteBuilder({
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted">
             Cotizador · {formatEntityCode(project.publicCode)}
+            {quote.quoteCode ? (
+              <span className="ml-2 rounded bg-surface-muted px-1.5 py-0.5 font-normal normal-case text-foreground">
+                #{quote.quoteCode}
+              </span>
+            ) : null}
             <span className="ml-2 rounded bg-surface-muted px-1.5 py-0.5 font-normal normal-case text-muted-strong">
               {quote.status === "FINAL" ? "Final" : "Borrador"}
+            </span>
+            <span
+              className={`ml-2 rounded px-1.5 py-0.5 font-normal normal-case ${quoteCommercialStatusClass(commercialStatus)}`}
+            >
+              {QUOTE_COMMERCIAL_STATUS_LABELS[commercialStatus]}
             </span>
             {dirty ? (
               <span className="ml-2 font-normal normal-case text-[#b06000]">
@@ -456,6 +509,11 @@ export function QuoteBuilder({
               setDraftSavedAt(null);
             }}
             onBlur={() => void saveTitle()}
+            placeholder={
+              quote.quoteCode
+                ? `Cotización #${quote.quoteCode}`
+                : "Título de la cotización"
+            }
             className="mt-1 w-full max-w-md border-0 border-b border-transparent bg-transparent text-xl font-semibold text-foreground outline-none focus:border-primary"
           />
           <p className="mt-1 text-sm text-muted">
@@ -475,6 +533,26 @@ export function QuoteBuilder({
               </span>
             ) : null}
           </p>
+          <label className="mt-3 flex flex-wrap items-center gap-2 text-sm text-foreground">
+            <span className="text-muted">Estado comercial</span>
+            <select
+              value={commercialStatus}
+              onChange={(e) =>
+                void saveCommercialStatus(
+                  e.target.value as QuoteCommercialStatus,
+                )
+              }
+              className="rounded-lg border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-primary"
+            >
+              {(
+                Object.keys(QUOTE_COMMERCIAL_STATUS_LABELS) as QuoteCommercialStatus[]
+              ).map((key) => (
+                <option key={key} value={key}>
+                  {QUOTE_COMMERCIAL_STATUS_LABELS[key]}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -732,6 +810,30 @@ export function QuoteBuilder({
                 {formatClp(summary.totalNeto)}
               </dd>
             </div>
+            <label className="flex cursor-pointer items-center justify-between gap-3 pt-2 text-sm text-foreground">
+              <span>Incluir IVA (19%)</span>
+              <input
+                type="checkbox"
+                checked={includeIva}
+                onChange={(e) => {
+                  const value = e.target.checked;
+                  setDraftSavedAt(null);
+                  setIncludeIva(value);
+                  void saveQuoteMeta({ includeIva: value });
+                }}
+                className="h-4 w-4 rounded border-border"
+              />
+            </label>
+            {includeIva ? (
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-3 text-base">
+                <dt className="font-semibold text-foreground">
+                  TOTAL + IVA (19%)
+                </dt>
+                <dd className="tabular-nums font-semibold text-foreground">
+                  {formatClp(summary.totalConIva)}
+                </dd>
+              </div>
+            ) : null}
           </dl>
         )}
       </div>

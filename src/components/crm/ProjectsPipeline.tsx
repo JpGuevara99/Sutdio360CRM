@@ -25,9 +25,23 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { formatInTimeZone } from "date-fns-tz";
 import { ProjectDrawer } from "@/components/crm/ProjectDrawer";
+import { ProjectClosePanel } from "@/components/crm/ProjectClosePanel";
+import { FollowUpSettingsModal } from "@/components/crm/FollowUpSettingsModal";
+import { NewProjectButton } from "@/components/crm/NewProjectButton";
 import { StatusBadge } from "@/components/crm/StatusBadge";
+import { formatClp } from "@/lib/crm/labels";
 import { formatEntityCode } from "@/lib/crm/project-codes";
-import type { PipelineStage, ProjectStatus, VisitSource } from "@/lib/crm/types";
+import { isFollowUpStopped } from "@/lib/crm/follow-ups";
+import {
+  CLOSED_STAGE_VISIBLE_DAYS,
+  isClosedStageName,
+} from "@/lib/crm/pipeline";
+import type {
+  FollowUpSettings,
+  PipelineStage,
+  ProjectStatus,
+  VisitSource,
+} from "@/lib/crm/types";
 
 const TZ = "America/Santiago";
 
@@ -42,6 +56,12 @@ export type BoardProject = {
   visitAt: string | null;
   bookedAt: string | null;
   source: VisitSource | null;
+  followUpCount: number;
+  /** Seguimiento agendado (el número “en curso”) */
+  followUpNextNumber: number | null;
+  closedAt: string | null;
+  /** Total neto de la última cotización del proyecto (null si no tiene) */
+  lastQuoteAmount: number | null;
 };
 
 type StageDTO = {
@@ -74,14 +94,23 @@ function parseStageDroppableId(id: string): string | null {
 export function ProjectsPipeline({
   initialStages,
   initialProjects,
+  initialFollowUpSettings,
+  hiddenClosedCount = 0,
 }: {
   initialStages: StageDTO[];
   initialProjects: BoardProject[];
+  initialFollowUpSettings: FollowUpSettings;
+  /** Cierres con más de 45 días que no se muestran en el tablero */
+  hiddenClosedCount?: number;
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("board");
   const [stages, setStages] = useState(initialStages);
   const [projects, setProjects] = useState(initialProjects);
+  const [followUpSettings, setFollowUpSettings] = useState(
+    initialFollowUpSettings,
+  );
+  const [followUpSettingsOpen, setFollowUpSettingsOpen] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeStageId, setActiveStageId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
@@ -93,12 +122,22 @@ export function ProjectsPipeline({
   const [dndReady, setDndReady] = useState(false);
   const [query, setQuery] = useState("");
   const [pageByStage, setPageByStage] = useState<Record<string, number>>({});
+  const [closeTarget, setCloseTarget] = useState<{
+    project: BoardProject;
+    snapshot: BoardProject[];
+  } | null>(null);
   const suppressClickRef = useRef(false);
 
   useEffect(() => {
     setStages(initialStages);
     setProjects(initialProjects);
-  }, [initialStages, initialProjects]);
+    setFollowUpSettings(initialFollowUpSettings);
+  }, [initialStages, initialProjects, initialFollowUpSettings]);
+
+  const closedStageId = useMemo(
+    () => stages.find((stage) => isClosedStageName(stage.name))?.id ?? null,
+    [stages],
+  );
 
   // Evita mismatch de hidratación de @dnd-kit (aria-describedby DndDescribedBy-N).
   useEffect(() => {
@@ -238,6 +277,26 @@ export function ProjectsPipeline({
     if (!overStageId || overStageId === "__unstaged__") return;
 
     const sourceStageId = activeProjectRow.stageId;
+
+    // Mover a "Cerrado" abre el panel de cierre; el cambio se confirma ahí.
+    if (
+      closedStageId &&
+      overStageId === closedStageId &&
+      sourceStageId !== closedStageId
+    ) {
+      const snapshot = projects;
+      setProjects((list) =>
+        list.map((p) =>
+          p.id === projectId
+            ? { ...p, stageId: closedStageId, boardOrder: -Date.now() }
+            : p,
+        ),
+      );
+      setError(null);
+      setCloseTarget({ project: activeProjectRow, snapshot });
+      return;
+    }
+
     const sourceList = (
       sourceStageId && projectsByStage.map.has(sourceStageId)
         ? (projectsByStage.map.get(sourceStageId) ?? [])
@@ -250,7 +309,7 @@ export function ProjectsPipeline({
 
     if (sourceStageId === overStageId) {
       const oldIndex = sourceList.indexOf(projectId);
-      let newIndex =
+      const newIndex =
         overData?.type === "card" || projects.some((p) => p.id === overId)
           ? targetList.indexOf(overId)
           : targetList.length - 1;
@@ -285,10 +344,12 @@ export function ProjectsPipeline({
     if (oldIndex < 0 || newIndex < 0) return;
 
     const previous = stages;
-    const next = arrayMove(stages, oldIndex, newIndex).map((stage, order) => ({
-      ...stage,
-      order,
-    }));
+    const moved = arrayMove(stages, oldIndex, newIndex);
+    // "Cerrado" se mantiene al final del tablero.
+    const next = [
+      ...moved.filter((s) => !isClosedStageName(s.name)),
+      ...moved.filter((s) => isClosedStageName(s.name)),
+    ].map((stage, order) => ({ ...stage, order }));
     setStages(next);
     setError(null);
     const res = await fetch("/api/pipeline/stages/reorder", {
@@ -393,6 +454,12 @@ export function ProjectsPipeline({
     setSelectedProjectId(projectId);
   }
 
+  function cancelClose() {
+    if (!closeTarget) return;
+    setProjects(closeTarget.snapshot);
+    setCloseTarget(null);
+  }
+
   const deletingStage = deletingStageId
     ? (stages.find((s) => s.id === deletingStageId) ?? null)
     : null;
@@ -423,15 +490,27 @@ export function ProjectsPipeline({
             Volver al tablero
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={() => setMode("settings")}
-            title="Configurar pipeline"
-            aria-label="Configurar pipeline"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted hover:bg-surface-muted hover:text-foreground"
-          >
-            <PipelineIcon />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <NewProjectButton />
+            <button
+              type="button"
+              onClick={() => setMode("settings")}
+              title="Configurar pipeline"
+              aria-label="Configurar pipeline"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface text-muted hover:bg-surface-muted hover:text-foreground"
+            >
+              <PipelineIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => setFollowUpSettingsOpen(true)}
+              title="Configurar seguimientos"
+              aria-label="Configurar seguimientos"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface text-muted hover:bg-surface-muted hover:text-foreground"
+            >
+              <FollowUpIcon />
+            </button>
+          </div>
         )}
       </div>
 
@@ -463,6 +542,9 @@ export function ProjectsPipeline({
                   page={stagePage(stage.id)}
                   onPageChange={(page) => setStagePage(stage.id, page)}
                   onOpen={openProject}
+                  hiddenCount={
+                    stage.id === closedStageId ? hiddenClosedCount : 0
+                  }
                 />
               ))}
               {visibleByStage.unstaged.length > 0 ? (
@@ -492,6 +574,7 @@ export function ProjectsPipeline({
                 page={stagePage(stage.id)}
                 onPageChange={(page) => setStagePage(stage.id, page)}
                 onOpen={openProject}
+                hiddenCount={stage.id === closedStageId ? hiddenClosedCount : 0}
               />
             ))}
             {visibleByStage.unstaged.length > 0 ? (
@@ -514,21 +597,31 @@ export function ProjectsPipeline({
           onDragEnd={(e) => void onSettingsDragEnd(e)}
         >
           <SortableContext
-            items={stages.map((s) => s.id)}
+            items={stages
+              .filter((s) => !isClosedStageName(s.name))
+              .map((s) => s.id)}
             strategy={horizontalListSortingStrategy}
           >
             <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
-              {stages.map((stage) => (
-                <SettingsColumn
-                  key={stage.id}
-                  stage={stage}
-                  projectCount={projectsByStage.map.get(stage.id)?.length ?? 0}
-                  busy={busy}
-                  onRename={(name) => void renameStage(stage.id, name)}
-                  onDelete={() => void deleteStage(stage.id)}
-                  isDragging={activeStageId === stage.id}
-                />
-              ))}
+              {stages.map((stage) =>
+                isClosedStageName(stage.name) ? (
+                  <FixedStageColumn
+                    key={stage.id}
+                    stage={stage}
+                    projectCount={projectsByStage.map.get(stage.id)?.length ?? 0}
+                  />
+                ) : (
+                  <SettingsColumn
+                    key={stage.id}
+                    stage={stage}
+                    projectCount={projectsByStage.map.get(stage.id)?.length ?? 0}
+                    busy={busy}
+                    onRename={(name) => void renameStage(stage.id, name)}
+                    onDelete={() => void deleteStage(stage.id)}
+                    isDragging={activeStageId === stage.id}
+                  />
+                ),
+              )}
               <div className="flex w-72 shrink-0 flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-surface-muted px-4 py-8 text-center">
                 <p className="mb-1 text-sm font-medium text-foreground">
                   Agregar etapa
@@ -574,6 +667,7 @@ export function ProjectsPipeline({
       <ProjectDrawer
         projectId={selectedProjectId}
         stages={stages}
+        followUpSettings={followUpSettings}
         onClose={() => setSelectedProjectId(null)}
         onStageChanged={(projectId, stageId) => {
           setProjects((list) =>
@@ -581,7 +675,56 @@ export function ProjectsPipeline({
           );
           router.refresh();
         }}
+        onFollowUpChanged={(projectId, state) => {
+          setProjects((list) =>
+            list.map((p) =>
+              p.id === projectId
+                ? {
+                    ...p,
+                    status: state.status,
+                    followUpCount: state.followUpCount,
+                    followUpNextNumber: state.followUpNextNumber,
+                  }
+                : p,
+            ),
+          );
+        }}
       />
+
+      {closeTarget ? (
+        <ProjectClosePanel
+          projectId={closeTarget.project.id}
+          publicCode={closeTarget.project.publicCode}
+          clientName={closeTarget.project.clientName}
+          onCancel={cancelClose}
+          onClosed={({ outcome, closedAt }) => {
+            const id = closeTarget.project.id;
+            setProjects((list) =>
+              list.map((p) =>
+                p.id === id
+                  ? {
+                      ...p,
+                      stageId: closedStageId ?? p.stageId,
+                      status: outcome,
+                      closedAt: new Date(`${closedAt}T12:00:00.000Z`).toISOString(),
+                      followUpNextNumber: null,
+                    }
+                  : p,
+              ),
+            );
+            setCloseTarget(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
+
+      {followUpSettingsOpen ? (
+        <FollowUpSettingsModal
+          settings={followUpSettings}
+          onClose={() => setFollowUpSettingsOpen(false)}
+          onSaved={(next) => setFollowUpSettings(next)}
+        />
+      ) : null}
 
       {deletingStage ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -685,12 +828,14 @@ function StaticBoardColumn({
   page,
   onPageChange,
   onOpen,
+  hiddenCount = 0,
 }: {
   stage: StageDTO;
   projects: BoardProject[];
   page: number;
   onPageChange: (page: number) => void;
   onOpen: (projectId: string) => void;
+  hiddenCount?: number;
 }) {
   const paged = paginateProjects(projects, page);
   return (
@@ -704,6 +849,12 @@ function StaticBoardColumn({
             {projects.length}
           </span>
         </div>
+        {hiddenCount > 0 ? (
+          <p className="mt-1 text-[11px] text-muted">
+            {hiddenCount} oculto{hiddenCount === 1 ? "" : "s"} con más de{" "}
+            {CLOSED_STAGE_VISIBLE_DAYS} días
+          </p>
+        ) : null}
       </header>
       <div className={COLUMN_BODY_CLASS}>
         {paged.visible.map((project) => (
@@ -731,6 +882,7 @@ function BoardColumn({
   onPageChange,
   droppable = true,
   onOpen,
+  hiddenCount = 0,
 }: {
   stage: StageDTO;
   projects: BoardProject[];
@@ -738,6 +890,7 @@ function BoardColumn({
   onPageChange: (page: number) => void;
   droppable?: boolean;
   onOpen: (projectId: string) => void;
+  hiddenCount?: number;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stageDroppableId(stage.id),
@@ -762,6 +915,12 @@ function BoardColumn({
             {projects.length}
           </span>
         </div>
+        {hiddenCount > 0 ? (
+          <p className="mt-1 text-[11px] text-muted">
+            {hiddenCount} oculto{hiddenCount === 1 ? "" : "s"} con más de{" "}
+            {CLOSED_STAGE_VISIBLE_DAYS} días
+          </p>
+        ) : null}
       </header>
       <div className={COLUMN_BODY_CLASS}>
         <SortableContext
@@ -834,9 +993,13 @@ function ProjectCard({
   project: BoardProject;
   overlay?: boolean;
 }) {
+  const stopped = isFollowUpStopped(project.status);
+  // Visualizador: el seguimiento en curso (agendado) o el último cumplido.
+  const shown = project.followUpNextNumber ?? project.followUpCount ?? 0;
+
   return (
     <article
-      className={`cursor-grab rounded-lg border border-border bg-surface p-3 shadow-sm active:cursor-grabbing ${
+      className={`relative cursor-grab rounded-lg border border-border bg-surface p-3 pb-8 shadow-sm active:cursor-grabbing ${
         overlay
           ? "scale-[1.02] shadow-xl ring-2 ring-primary"
           : "hover:border-primary"
@@ -876,6 +1039,36 @@ function ProjectCard({
             : "—"}
         </p>
       </div>
+      <span
+        title={
+          project.lastQuoteAmount != null
+            ? "Total neto de la última cotización"
+            : "Sin cotizaciones"
+        }
+        className="absolute bottom-2 left-3 text-[11px] font-semibold tabular-nums text-muted-strong"
+      >
+        {project.lastQuoteAmount != null
+          ? formatClp(project.lastQuoteAmount)
+          : "$ —"}
+      </span>
+      <span
+        title={
+          stopped
+            ? "Seguimientos detenidos (Aprobado/Rechazado)"
+            : project.followUpNextNumber
+              ? `Seguimiento #${project.followUpNextNumber} en curso`
+              : project.followUpCount > 0
+                ? `Último seguimiento cumplido: #${project.followUpCount}`
+                : "Sin seguimientos"
+        }
+        className={`absolute bottom-2 right-2 inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold tabular-nums ${
+          stopped
+            ? "bg-neutral-200 text-neutral-500"
+            : "bg-violet-100 text-violet-900"
+        }`}
+      >
+        {shown}
+      </span>
     </article>
   );
 }
@@ -941,6 +1134,82 @@ function PipelineIcon() {
       <path d="M6 6v12" />
       <path d="M6 12h8a2 2 0 0 0 2-2V10" />
     </svg>
+  );
+}
+
+function FollowUpIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="13" r="8" />
+      <path d="M12 9v4l2.5 1.5" />
+      <path d="M5 3 3 5" />
+      <path d="m19 3 2 2" />
+    </svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  );
+}
+
+/** Etapa fija: no se renombra, no se elimina y no se reordena. */
+function FixedStageColumn({
+  stage,
+  projectCount,
+}: {
+  stage: StageDTO;
+  projectCount: number;
+}) {
+  return (
+    <section className="flex w-72 shrink-0 flex-col rounded-xl border border-border bg-surface-muted/60">
+      <header className="flex items-center gap-2 border-b border-border px-3 py-3">
+        <span className="text-muted">
+          <LockIcon />
+        </span>
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+          {stage.name}
+        </h2>
+        <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-muted">
+          Fija
+        </span>
+      </header>
+      <div className="flex flex-1 flex-col gap-3 p-3">
+        <p className="text-xs text-muted">
+          {projectCount} proyecto{projectCount === 1 ? "" : "s"} en esta etapa
+        </p>
+        <p className="text-xs leading-relaxed text-muted">
+          Etapa de cierre del pipeline. No se puede renombrar, eliminar ni
+          mover: al arrastrar una tarjeta aquí se abre el panel de cierre y las
+          tarjetas se ocultan del tablero a los {CLOSED_STAGE_VISIBLE_DAYS}{" "}
+          días.
+        </p>
+      </div>
+    </section>
   );
 }
 

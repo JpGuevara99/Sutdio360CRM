@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { recordAudit } from "@/lib/crm/audit";
 import { db } from "@/lib/db";
+import { canDeleteQuote } from "@/lib/crm/quote-delete";
 
 export async function GET(
   request: Request,
@@ -32,10 +34,14 @@ const discountSchema = z.number().min(0).max(100);
 const patchSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   status: z.enum(["DRAFT", "FINAL"]).optional(),
+  commercialStatus: z
+    .enum(["NONE", "SENT", "ACCEPTED", "REJECTED"])
+    .optional(),
   mermaPercent: percentSchema.optional(),
   utilidadPercent: percentSchema.optional(),
   extraPercent: percentSchema.optional(),
   discountPercent: discountSchema.optional(),
+  includeIva: z.boolean().optional(),
   warrantyMonths: z.number().int().min(0).max(120).optional(),
   installmentCount: z.number().int().min(0).max(60).optional(),
   installmentInterestFree: z.boolean().optional(),
@@ -82,6 +88,22 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  if (!canDeleteQuote(existing.createdAt)) {
+    return NextResponse.json(
+      {
+        error:
+          "Solo se puede eliminar una cotización durante las primeras 48 horas",
+      },
+      { status: 403 },
+    );
+  }
+
   await db.deleteQuote(quoteId);
+  await recordAudit({
+    action: "QUOTE_DELETE",
+    actorEmail: session.email,
+    target: quoteId,
+    detail: existing.quoteCode ?? existing.title,
+  });
   return NextResponse.json({ ok: true });
 }

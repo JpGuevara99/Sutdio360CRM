@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { isValidCronSecret } from "@/lib/auth/cron-secret";
 import { syncAppointmentsFromCalendar } from "@/lib/crm/ingest-appointment";
 
-function authorized(request: Request): Promise<boolean> | boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  const header = request.headers.get("x-cron-secret");
-  if (cronSecret && header === cronSecret) return true;
-  return getSessionFromRequest(request).then((s) => Boolean(s));
+async function authorized(request: Request): Promise<boolean> {
+  if (isValidCronSecret(request.headers.get("x-cron-secret"))) return true;
+  return Boolean(await getSessionFromRequest(request));
 }
 
 export async function POST(request: Request) {

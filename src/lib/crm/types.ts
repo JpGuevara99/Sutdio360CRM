@@ -4,6 +4,7 @@ export type ProjectStatus =
   | "COTIZADO"
   | "SEGUIMIENTO"
   | "APROBADO"
+  | "RECHAZADO"
   | "PRODUCCION"
   | "INSTALACION"
   | "GARANTIA"
@@ -41,6 +42,12 @@ export type Material = {
   updatedAt: Date;
 };
 
+/**
+ * Días que un elemento permanece en la papelera antes de descartarse.
+ * Coincide con la papelera de Drive, que purga por su cuenta a los 30 días.
+ */
+export const TRASH_RETENTION_DAYS = 30;
+
 export type Client = {
   id: string;
   /** Código público del cliente, ej. C-01 */
@@ -52,9 +59,14 @@ export type Client = {
   address: string | null;
   driveFolderId: string | null;
   driveFolderUrl: string | null;
+  /** Si está en la papelera, cuándo se envió */
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
+
+/** Conclusión comercial al cerrar un proyecto */
+export type ProjectClosingOutcome = "APROBADO" | "RECHAZADO";
 
 export type Project = {
   id: string;
@@ -73,6 +85,30 @@ export type Project = {
   driveFolderId: string | null;
   driveFolderUrl: string | null;
   driveSyncPending: boolean;
+  /** Seguimientos ya cumplidos */
+  followUpCount: number;
+  /** Cuándo se inició la secuencia de seguimientos */
+  followUpStartedAt: Date | null;
+  /** Cuándo se cumplió el último seguimiento */
+  followUpLastAt: Date | null;
+  /** Número del seguimiento agendado (null si no hay uno pendiente) */
+  followUpNextNumber: number | null;
+  /** Fecha del seguimiento agendado */
+  followUpNextAt: Date | null;
+  /** Task de Google Tasks del seguimiento agendado */
+  followUpTaskId: string | null;
+  followUpTaskListId: string | null;
+  /** Cierre comercial */
+  closedAt: Date | null;
+  closingOutcome: ProjectClosingOutcome | null;
+  /** Cotización con la que se concretó (o rechazó) el proyecto */
+  closedQuoteId: string | null;
+  /** Monto confirmado al cerrar */
+  closedAmount: number | null;
+  /** Si está en la papelera, cuándo se envió */
+  deletedAt: Date | null;
+  /** Se envió a la papelera arrastrado por su cliente */
+  deletedWithClient: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -119,6 +155,31 @@ export type StaffUser = {
   updatedAt: Date;
 };
 
+/** Acciones sensibles que quedan registradas con autor y fecha. */
+export type AuditAction =
+  | "PROJECT_TRASH"
+  | "CLIENT_TRASH"
+  | "TRASH_RESTORE"
+  | "TRASH_RESTORE_ALL"
+  | "TRASH_PURGE"
+  | "TRASH_PURGE_ALL"
+  | "CLIENT_MERGE"
+  | "QUOTE_DELETE"
+  | "PIPELINE_STAGE_DELETE"
+  | "SETTINGS_UPDATE";
+
+export type AuditLog = {
+  id: string;
+  action: AuditAction;
+  /** Correo de la sesión que ejecutó la acción */
+  actorEmail: string;
+  /** Identificador de lo afectado (proyecto, cliente, cotización…) */
+  target: string | null;
+  /** Resumen legible de lo que pasó */
+  detail: string | null;
+  createdAt: Date;
+};
+
 export type FileRef = {
   id: string;
   projectId: string;
@@ -148,13 +209,46 @@ export type CompanySettings = {
   updatedAt: Date;
 };
 
+/** Configuración global de la secuencia de seguimientos comerciales */
+export type FollowUpSettings = {
+  /** Cantidad de seguimientos de la secuencia */
+  count: number;
+  /** Días de espera antes de cada seguimiento (largo = count) */
+  intervalDays: number[];
+  updatedAt: Date;
+};
+
 export type QuoteStatus = "DRAFT" | "FINAL";
+
+/** Semáforo comercial (independiente de DRAFT/FINAL). */
+export type QuoteCommercialStatus =
+  | "NONE"
+  | "SENT"
+  | "ACCEPTED"
+  | "REJECTED";
+
+export const QUOTE_IVA_RATE = 0.19;
+
+/**
+ * Suma de costos de las líneas agrupada por tipo. Los porcentajes (merma,
+ * utilidad, extra, descuento, IVA) se aplican sobre estos tres montos, así que
+ * bastan para reconstruir cualquier total de la cotización.
+ */
+export type QuoteCosts = {
+  labor: number;
+  logistics: number;
+  materials: number;
+};
 
 export type Quote = {
   id: string;
   projectId: string;
+  /** Código único de cotización, ej. P1201 (sin la palabra "Cotización") */
+  quoteCode: string | null;
   title: string;
   status: QuoteStatus;
+  /** Estado comercial: sin asignar / enviado / aceptado / rechazado */
+  commercialStatus: QuoteCommercialStatus;
   /** % sobre el subtotal de materiales */
   mermaPercent: number;
   /** % sobre Mano de Obra + Logística + Materiales */
@@ -163,6 +257,8 @@ export type Quote = {
   extraPercent: number;
   /** % de descuento sobre el subtotal neto */
   discountPercent: number;
+  /** Si true, muestra Total + IVA (19%) bajo el total neto */
+  includeIva: boolean;
   /** Meses de garantía mostrados en observaciones */
   warrantyMonths: number;
   /** Cantidad de cuotas mostradas en observaciones */
@@ -173,6 +269,12 @@ export type Quote = {
   observations: string;
   /** Si es false, no se muestran las observaciones en el documento */
   showObservations: boolean;
+  /**
+   * Costos por tipo, guardados en la cotización cada vez que cambian sus
+   * líneas. Con ellos se calculan los totales sin volver a leer las líneas.
+   * `null` = cotización antigua sin el dato (hay que calcularla desde líneas).
+   */
+  costs: QuoteCosts | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -213,4 +315,14 @@ export type ProjectWithRelations = Project & {
 export type ClientWithProjects = Client & {
   projects: Project[];
   projectCount: number;
+};
+
+/** Proyecto en la papelera, con su cliente para mostrarlo en la lista */
+export type TrashedProject = Project & {
+  client: Client | null;
+};
+
+/** Cliente en la papelera, con los proyectos que arrastró */
+export type TrashedClient = Client & {
+  projects: Project[];
 };

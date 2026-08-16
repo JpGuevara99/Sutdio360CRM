@@ -12,12 +12,13 @@ const NAV = [
   { href: "/clientes", label: "Clientes", icon: "☺" },
   { href: "/materiales", label: "Lista de Materiales", icon: "▦" },
   { href: "/cotizador", label: "Cotizador", icon: "☰" },
-  { href: "/leads/nuevo", label: "Nueva visita", icon: "+" },
+  { href: "/leads/nuevo", label: "Nuevo Lead / Proyecto", icon: "+" },
+  { href: "/papelera", label: "Papelera de Reciclaje", icon: "🗑" },
 ];
 
 const STORAGE_KEY = "studio360.sidebarCollapsed";
 
-export function Sidebar() {
+export function Sidebar({ driveUrl }: { driveUrl: string }) {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
   const [collapsed, setCollapsed] = useState(false);
@@ -98,6 +99,27 @@ export function Sidebar() {
         })}
       </nav>
 
+      <div className={`pb-2 ${collapsed ? "px-2" : "px-3"}`}>
+        <div
+          className={`flex ${
+            collapsed ? "flex-col items-center gap-0.5" : "gap-0.5"
+          }`}
+        >
+          <ShortcutLink href={driveUrl} label="Google Drive">
+            <DriveIcon />
+          </ShortcutLink>
+          <ShortcutLink href="https://tasks.google.com/" label="Google Tasks">
+            <TasksIcon />
+          </ShortcutLink>
+          <ShortcutLink
+            href="https://calendar.google.com/"
+            label="Google Calendar"
+          >
+            <CalendarIcon />
+          </ShortcutLink>
+        </div>
+      </div>
+
       <div
         className={`border-t border-border p-3 ${collapsed ? "px-2" : ""}`}
       >
@@ -131,6 +153,109 @@ export function Sidebar() {
         <ChevronIcon direction={collapsed ? "right" : "left"} />
       </button>
     </div>
+  );
+}
+
+function ShortcutLink({
+  href,
+  label,
+  children,
+}: {
+  href: string;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={label}
+      aria-label={label}
+      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent transition hover:border-border hover:bg-hover"
+    >
+      {children}
+    </a>
+  );
+}
+
+function DriveIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 87.3 78" aria-hidden>
+      <path
+        d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z"
+        fill="#0066da"
+      />
+      <path
+        d="m43.65 25.35-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.95-1.2 4.5h27.5z"
+        fill="#00a6f0"
+      />
+      <path
+        d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.4-12.8c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.85 11.5z"
+        fill="#00832d"
+      />
+      <path
+        d="m43.65 25.35 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z"
+        fill="#00832d"
+      />
+      <path
+        d="m59.8 53.25h27.5c0-1.55-.4-3.1-1.2-4.5l-7.4-12.8-1.6-2.75c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8z"
+        fill="#ea4335"
+      />
+      <path
+        d="m59.8 53.25-5.85-11.5-10.3-20.4-10.3 20.4-5.85 11.5z"
+        fill="#2684fc"
+      />
+    </svg>
+  );
+}
+
+function TasksIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <path
+        d="M4.5 12.6 8.4 16.5l11.1-11.1a1.6 1.6 0 0 0-2.3-2.3L8.4 12l-1.6-1.7a1.6 1.6 0 0 0-2.3 2.3z"
+        fill="#1a73e8"
+      />
+      <path
+        d="M8.4 16.5 4.5 20.4a1.6 1.6 0 0 1-2.3-2.3l2.3-2.3z"
+        fill="#4285f4"
+      />
+      <circle cx="19" cy="19" r="3" fill="#fbbc04" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <rect x="3" y="4" width="18" height="17" rx="2.5" fill="#ffffff" />
+      <path
+        d="M3 6.5A2.5 2.5 0 0 1 5.5 4h13A2.5 2.5 0 0 1 21 6.5V8H3z"
+        fill="#1a73e8"
+      />
+      <rect
+        x="3.75"
+        y="4.75"
+        width="16.5"
+        height="15.5"
+        rx="2"
+        fill="none"
+        stroke="#4285f4"
+        strokeWidth="1.5"
+      />
+      <text
+        x="12"
+        y="17.5"
+        textAnchor="middle"
+        fontSize="9"
+        fontWeight="700"
+        fill="#1a73e8"
+        fontFamily="Arial, sans-serif"
+      >
+        31
+      </text>
+    </svg>
   );
 }
 

@@ -4,12 +4,20 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { formatInTimeZone } from "date-fns-tz";
 import { StatusBadge } from "@/components/crm/StatusBadge";
+import { ProjectDrawerQuotes } from "@/components/crm/ProjectDrawerQuotes";
 import { ProjectNotesPanel } from "@/components/crm/ProjectNotesPanel";
+import { ProjectStatusForm } from "@/components/crm/ProjectStatusForm";
+import {
+  FollowUpControls,
+  type FollowUpState,
+} from "@/components/crm/FollowUpControls";
 import { VISIT_SOURCE_LABELS, clientFullName } from "@/lib/crm/labels";
+import { isClosedStageName } from "@/lib/crm/pipeline";
 import { formatEntityCode } from "@/lib/crm/project-codes";
 import type {
   Client,
   FileRef,
+  FollowUpSettings,
   PipelineStage,
   ProjectStatus,
   Visit,
@@ -25,6 +33,10 @@ type ProjectDetail = {
   stageId: string | null;
   title: string | null;
   driveFolderUrl: string | null;
+  followUpCount: number;
+  followUpLastAt: string | null;
+  followUpNextNumber: number | null;
+  followUpNextAt: string | null;
   client: Client;
   files: FileRef[];
   projectNotes: Array<{
@@ -45,13 +57,17 @@ type ProjectDetail = {
 export function ProjectDrawer({
   projectId,
   stages,
+  followUpSettings,
   onClose,
   onStageChanged,
+  onFollowUpChanged,
 }: {
   projectId: string | null;
   stages: Array<Pick<PipelineStage, "id" | "name" | "order">>;
+  followUpSettings: FollowUpSettings;
   onClose: () => void;
   onStageChanged: (projectId: string, stageId: string) => void;
+  onFollowUpChanged?: (projectId: string, state: FollowUpState) => void;
 }) {
   const open = Boolean(projectId);
   const [loading, setLoading] = useState(false);
@@ -83,6 +99,10 @@ export function ProjectDrawer({
           stageId: string | null;
           title: string | null;
           driveFolderUrl: string | null;
+          followUpCount?: number;
+          followUpLastAt?: string | Date | null;
+          followUpNextNumber?: number | null;
+          followUpNextAt?: string | Date | null;
           client: Client;
           files?: FileRef[];
           projectNotes?: Array<{
@@ -105,6 +125,8 @@ export function ProjectDrawer({
         return;
       }
 
+      const lastAt = data.project.followUpLastAt;
+      const nextAt = data.project.followUpNextAt;
       const detail: ProjectDetail = {
         id: data.project.id,
         publicCode: data.project.publicCode,
@@ -112,6 +134,18 @@ export function ProjectDrawer({
         stageId: data.project.stageId,
         title: data.project.title,
         driveFolderUrl: data.project.driveFolderUrl,
+        followUpCount: data.project.followUpCount ?? 0,
+        followUpLastAt: lastAt
+          ? typeof lastAt === "string"
+            ? lastAt
+            : new Date(lastAt).toISOString()
+          : null,
+        followUpNextNumber: data.project.followUpNextNumber ?? null,
+        followUpNextAt: nextAt
+          ? typeof nextAt === "string"
+            ? nextAt
+            : new Date(nextAt).toISOString()
+          : null,
         client: data.project.client,
         files: data.project.files ?? [],
         projectNotes: (data.project.projectNotes ?? []).map((n) => ({
@@ -278,7 +312,19 @@ export function ProjectDrawer({
                 <span className="rounded bg-primary-soft px-2 py-0.5 text-xs font-medium text-primary-text">
                   {formatEntityCode(project.client.leadCode)}
                 </span>
+                <span className="rounded bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-900">
+                  Seg. {project.followUpCount}/{followUpSettings.count}
+                </span>
               </div>
+
+              <ProjectStatusForm
+                projectId={project.id}
+                status={project.status}
+                compact
+                onChanged={(status) =>
+                  setProject((p) => (p ? { ...p, status } : p))
+                }
+              />
 
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-muted-strong">
@@ -290,13 +336,56 @@ export function ProjectDrawer({
                   onChange={(e) => void saveStage(e.target.value)}
                   className="w-full rounded-lg border border-border px-3 py-2 outline-none focus:border-primary"
                 >
-                  {stages.map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {stage.name}
-                    </option>
-                  ))}
+                  {stages.map((stage) => {
+                    // El cierre se confirma en el panel del tablero.
+                    const lockedClosed =
+                      isClosedStageName(stage.name) &&
+                      project.stageId !== stage.id;
+                    return (
+                      <option
+                        key={stage.id}
+                        value={stage.id}
+                        disabled={lockedClosed}
+                      >
+                        {stage.name}
+                        {lockedClosed ? " (arrastra la tarjeta)" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
+
+              <section className="space-y-2 text-sm">
+                <h3 className="font-medium text-foreground">Seguimientos</h3>
+                <FollowUpControls
+                  key={project.id}
+                  projectId={project.id}
+                  settings={followUpSettings}
+                  compact
+                  state={{
+                    status: project.status,
+                    followUpCount: project.followUpCount,
+                    followUpNextNumber: project.followUpNextNumber,
+                    followUpNextAt: project.followUpNextAt,
+                    followUpLastAt: project.followUpLastAt,
+                  }}
+                  onChanged={(state) => {
+                    setProject((p) =>
+                      p
+                        ? {
+                            ...p,
+                            status: state.status,
+                            followUpCount: state.followUpCount,
+                            followUpNextNumber: state.followUpNextNumber,
+                            followUpNextAt: state.followUpNextAt,
+                            followUpLastAt: state.followUpLastAt,
+                          }
+                        : p,
+                    );
+                    onFollowUpChanged?.(project.id, state);
+                  }}
+                />
+              </section>
 
               <section className="space-y-2 text-sm">
                 <h3 className="font-medium text-foreground">Cliente</h3>
@@ -342,6 +431,8 @@ export function ProjectDrawer({
                   <p className="text-muted">Sin visita registrada</p>
                 )}
               </section>
+
+              <ProjectDrawerQuotes key={project.id} projectId={project.id} />
 
               <section className="space-y-2">
                 <ProjectNotesPanel

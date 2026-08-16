@@ -9,9 +9,13 @@ import { ProjectStatusForm } from "@/components/crm/ProjectStatusForm";
 import { ProjectNotesPanel } from "@/components/crm/ProjectNotesPanel";
 import { ProjectFilesPanel } from "@/components/crm/ProjectFilesPanel";
 import { ProjectQuotesSection } from "@/components/crm/ProjectQuotesSection";
+import { ProjectFollowUpPanel } from "@/components/crm/ProjectFollowUpPanel";
 import { ClientEditForm } from "@/components/crm/ClientEditForm";
-import { VISIT_SOURCE_LABELS } from "@/lib/crm/labels";
+import { DeleteEntityAction } from "@/components/crm/DeleteEntityAction";
+import { VISIT_SOURCE_LABELS, formatClp } from "@/lib/crm/labels";
 import { formatEntityCode } from "@/lib/crm/project-codes";
+import { formatQuoteCodeLabel } from "@/lib/crm/quote-codes";
+import { requirePageSession } from "@/lib/auth/require-page-session";
 import { db } from "@/lib/db";
 
 const TZ = "America/Santiago";
@@ -22,11 +26,17 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [project, quotes] = await Promise.all([
+  await requirePageSession();
+  const [project, quotes, followUpSettings] = await Promise.all([
     db.getProjectById(id),
     db.listQuotesByProject(id),
+    db.getFollowUpSettings(),
   ]);
   if (!project) notFound();
+
+  const closingQuote = project.closedQuoteId
+    ? (quotes.find((q) => q.id === project.closedQuoteId) ?? null)
+    : null;
 
   return (
     <>
@@ -107,6 +117,57 @@ export default async function ProjectDetailPage({
           </section>
         </div>
 
+        {project.closedAt ? (
+          <section className="rounded-xl border border-border bg-surface p-5">
+            <h3 className="mb-3 text-sm font-medium text-foreground">Cierre</h3>
+            <dl className="space-y-2 text-sm">
+              <Row
+                label="Conclusión"
+                value={
+                  project.closingOutcome === "APROBADO"
+                    ? "Aprobado"
+                    : project.closingOutcome === "RECHAZADO"
+                      ? "Rechazado"
+                      : "—"
+                }
+              />
+              <Row
+                label="Finalización"
+                value={formatInTimeZone(project.closedAt, TZ, "dd/MM/yyyy")}
+              />
+              <Row
+                label="Monto"
+                value={
+                  project.closedAmount != null
+                    ? formatClp(project.closedAmount)
+                    : "—"
+                }
+              />
+              <Row
+                label="Cotización"
+                value={
+                  closingQuote
+                    ? (closingQuote.quoteCode
+                        ? formatQuoteCodeLabel(closingQuote.quoteCode)
+                        : closingQuote.title)
+                    : "Sin cotización asociada"
+                }
+              />
+            </dl>
+          </section>
+        ) : null}
+
+        <ProjectFollowUpPanel
+          projectId={project.id}
+          publicCode={project.publicCode}
+          status={project.status}
+          settings={followUpSettings}
+          followUpCount={project.followUpCount ?? 0}
+          followUpLastAt={project.followUpLastAt}
+          followUpNextNumber={project.followUpNextNumber ?? null}
+          followUpNextAt={project.followUpNextAt}
+        />
+
         <ProjectQuotesSection projectId={project.id} quotes={quotes} />
 
         <section className="rounded-xl border border-border bg-surface p-5">
@@ -167,6 +228,26 @@ export default async function ProjectDetailPage({
             ))}
           </ul>
         </section>
+
+        {project.deletedAt ? (
+          <section className="rounded-xl border border-[#d93025]/40 bg-[#d93025]/5 p-4">
+            <p className="text-sm text-[#d93025]">
+              Este proyecto está en la Papelera de Reciclaje. Restáuralo desde{" "}
+              <Link href="/papelera" className="underline">
+                Papelera de Reciclaje
+              </Link>
+              .
+            </p>
+          </section>
+        ) : (
+          <div className="flex justify-end pb-2">
+            <DeleteEntityAction
+              kind="project"
+              id={project.id}
+              label={formatEntityCode(project.publicCode)}
+            />
+          </div>
+        )}
       </PageBody>
     </>
   );

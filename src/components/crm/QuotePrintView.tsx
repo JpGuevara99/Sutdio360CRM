@@ -74,6 +74,9 @@ export function QuotePrintView({
 }) {
   const detailed = variant === "detailed";
   const [downloading, setDownloading] = useState(false);
+  const [driveIntent, setDriveIntent] = useState<
+    "upload" | "download-and-upload"
+  >("upload");
   const [drivePhase, setDrivePhase] = useState<
     "idle" | "confirm" | "uploading" | "done"
   >("idle");
@@ -135,7 +138,14 @@ export function QuotePrintView({
     }
   }
 
-  async function downloadAndUploadToDrive() {
+  function openDriveConfirm(intent: "upload" | "download-and-upload") {
+    setDriveIntent(intent);
+    setDrivePhase("confirm");
+    setError(null);
+    setMessage(null);
+  }
+
+  async function exportToDrive(includePdf: boolean) {
     setDrivePhase("uploading");
     setError(null);
     setMessage(null);
@@ -144,7 +154,7 @@ export function QuotePrintView({
       const res = await fetch(`/api/quotes/${quote.id}/export-pdf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ variant, includePdf: true }),
+        body: JSON.stringify({ variant, includePdf }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -157,7 +167,7 @@ export function QuotePrintView({
         setDrivePhase("confirm");
         return;
       }
-      if (data.pdfBase64) {
+      if (includePdf && data.pdfBase64) {
         downloadBlob(
           base64ToBlob(data.pdfBase64, "application/pdf"),
           data.fileName ?? data.file?.name ?? `Presupuesto-${variant}.pdf`,
@@ -166,7 +176,9 @@ export function QuotePrintView({
       setDriveFile(data.file ?? null);
       setDrivePhase("done");
       setMessage(
-        `PDF descargado y guardado en Drive${data.file?.name ? `: ${data.file.name}` : ""}.`,
+        includePdf
+          ? `PDF descargado y guardado en Drive${data.file?.name ? `: ${data.file.name}` : ""}.`
+          : `PDF subido a Drive${data.file?.name ? `: ${data.file.name}` : ""}.`,
       );
     } catch {
       setError("Error de red al subir el PDF");
@@ -203,7 +215,14 @@ export function QuotePrintView({
           </button>
           <button
             type="button"
-            onClick={() => setDrivePhase("confirm")}
+            onClick={() => openDriveConfirm("upload")}
+            className="rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground hover:bg-surface-muted"
+          >
+            Subir a Drive
+          </button>
+          <button
+            type="button"
+            onClick={() => openDriveConfirm("download-and-upload")}
             className="rounded-full bg-[#1a73e8] px-4 py-2 text-sm font-medium text-white hover:bg-[#1765cc]"
           >
             Descargar y subir al Drive
@@ -238,6 +257,12 @@ export function QuotePrintView({
             />
             <dl className="mt-4 space-y-1 text-[15px] leading-snug">
               <div className="grid grid-cols-[88px_1fr] gap-2">
+                <dt className="text-neutral-500">Cotización:</dt>
+                <dd className="font-semibold tracking-wide">
+                  {quote.quoteCode ? `#${quote.quoteCode}` : "—"}
+                </dd>
+              </div>
+              <div className="grid grid-cols-[88px_1fr] gap-2">
                 <dt className="text-neutral-500">Cliente:</dt>
                 <dd className="font-medium">{clientFullName(client)}</dd>
               </div>
@@ -263,9 +288,24 @@ export function QuotePrintView({
           </div>
         </header>
 
-        <h1 className="mb-4 text-center text-xl font-semibold tracking-wide text-neutral-900">
-          {quote.title}
-        </h1>
+        {(() => {
+          const trimmed = quote.title.trim();
+          const auto =
+            quote.quoteCode != null
+              ? [`Cotización #${quote.quoteCode}`, `#${quote.quoteCode}`]
+              : [];
+          const isGeneric =
+            !trimmed ||
+            trimmed === "Presupuesto de costos" ||
+            trimmed === "Presupuesto" ||
+            auto.includes(trimmed);
+          if (isGeneric) return null;
+          return (
+            <h1 className="mb-4 text-center text-xl font-semibold tracking-wide text-neutral-900">
+              {quote.title}
+            </h1>
+          );
+        })()}
 
         <table className="quote-print-table w-full table-fixed border-collapse text-[12.5px] leading-[20px]">
           <thead>
@@ -337,12 +377,29 @@ export function QuotePrintView({
                 {formatClp(summary.discountAmount)}
               </span>
             </div>
-            <div className="flex justify-between gap-4 bg-neutral-800 px-3 py-2.5 font-semibold text-white">
-              <span>TOTAL NETO</span>
-              <span className="tabular-nums">
-                {formatClp(summary.totalNeto)}
-              </span>
-            </div>
+            {summary.includeIva ? (
+              <>
+                <div className="flex justify-between gap-4 border-b border-neutral-200 px-3 py-2.5 font-semibold">
+                  <span>TOTAL NETO</span>
+                  <span className="tabular-nums">
+                    {formatClp(summary.totalNeto)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-4 bg-neutral-800 px-3 py-2.5 font-semibold text-white">
+                  <span>TOTAL + IVA (19%)</span>
+                  <span className="tabular-nums">
+                    {formatClp(summary.totalConIva)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between gap-4 bg-neutral-800 px-3 py-2.5 font-semibold text-white">
+                <span>TOTAL NETO</span>
+                <span className="tabular-nums">
+                  {formatClp(summary.totalNeto)}
+                </span>
+              </div>
+            )}
           </div>
 
           {showObservations ? (
@@ -390,12 +447,14 @@ export function QuotePrintView({
             {drivePhase === "confirm" ? (
               <>
                 <h4 className="mb-2 text-base font-semibold text-foreground">
-                  Descargar y subir al Drive
+                  {driveIntent === "upload"
+                    ? "Subir a Drive"
+                    : "Descargar y subir al Drive"}
                 </h4>
                 <p className="mb-4 text-sm text-muted-strong">
-                  Se generará el PDF ({detailed ? "detallado" : "sin detalles"}),
-                  se descargará en tu equipo y se subirá a la carpeta Drive del
-                  proyecto.
+                  {driveIntent === "upload"
+                    ? `Se generará el PDF (${detailed ? "detallado" : "sin detalles"}) y se subirá a la carpeta Drive del proyecto, sin descargarlo.`
+                    : `Se generará el PDF (${detailed ? "detallado" : "sin detalles"}), se descargará en tu equipo y se subirá a la carpeta Drive del proyecto.`}
                 </p>
                 <div className="flex justify-end gap-2">
                   <button
@@ -407,7 +466,9 @@ export function QuotePrintView({
                   </button>
                   <button
                     type="button"
-                    onClick={() => void downloadAndUploadToDrive()}
+                    onClick={() =>
+                      void exportToDrive(driveIntent === "download-and-upload")
+                    }
                     className="rounded-full bg-[#1a73e8] px-4 py-2 text-sm font-medium text-white"
                   >
                     Continuar
@@ -432,8 +493,9 @@ export function QuotePrintView({
                   Listo
                 </h4>
                 <p className="mb-3 text-sm text-muted-strong">
-                  El PDF se descargó y quedó en Drive
-                  {driveFile?.name ? ` como ${driveFile.name}` : ""}.
+                  {driveIntent === "upload"
+                    ? `El PDF quedó en Drive${driveFile?.name ? ` como ${driveFile.name}` : ""}.`
+                    : `El PDF se descargó y quedó en Drive${driveFile?.name ? ` como ${driveFile.name}` : ""}.`}
                 </p>
                 {driveFile?.webViewLink ? (
                   <a

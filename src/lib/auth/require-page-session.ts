@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   SESSION_COOKIE,
-  verifyIdToken,
+  verifySessionCookie,
   type SessionUser,
 } from "@/lib/auth/session";
 
@@ -14,7 +14,7 @@ export async function requirePageSession(): Promise<SessionUser> {
   }
 
   try {
-    return await verifyIdToken(token);
+    return await verifySessionCookie(token);
   } catch {
     redirect("/login");
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { MAX_UPLOAD_BYTES, isBlockedUpload } from "@/lib/crm/file-safety";
 import { db } from "@/lib/db";
 import { ensureProjectDriveFolder } from "@/lib/crm/drive-sync";
 import { uploadFileToFolder } from "@/lib/google/drive";
@@ -74,8 +75,27 @@ export async function POST(
     return NextResponse.json({ error: "Falta el archivo" }, { status: 400 });
   }
 
-  const buffer = Buffer.from(await file.arrayBuffer());
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json(
+      {
+        error: `El archivo supera el máximo de ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB`,
+      },
+      { status: 413 },
+    );
+  }
+
   const mimeType = file.type || "application/octet-stream";
+  if (isBlockedUpload(file.name, mimeType)) {
+    return NextResponse.json(
+      {
+        error:
+          "Ese tipo de archivo no se permite (puede ejecutar código). Súbelo como PDF o imagen.",
+      },
+      { status: 415 },
+    );
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
   const uploaded = await uploadFileToFolder({
     folderId: project.driveFolderId,
     fileName: file.name,

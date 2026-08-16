@@ -6,6 +6,7 @@ export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   COTIZADO: "Cotizado",
   SEGUIMIENTO: "Seguimiento",
   APROBADO: "Aprobado",
+  RECHAZADO: "Rechazado",
   PRODUCCION: "Producción",
   INSTALACION: "Instalación",
   GARANTIA: "Garantía",

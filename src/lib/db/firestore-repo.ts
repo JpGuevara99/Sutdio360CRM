@@ -1,41 +1,69 @@
-import {
-  FieldValue,
-  type DocumentData,
-  type Query,
-} from "firebase-admin/firestore";
+import { FieldValue, type DocumentData } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { createId, stripUndefined, toDate } from "@/lib/db/serialize";
 import type {
+  AuditAction,
+  AuditLog,
   ChileAddress,
   Client,
+  QuoteCosts,
   ClientWithProjects,
   CompanySettings,
   FileKind,
   FileRef,
+  FollowUpSettings,
   Material,
   MaterialCategory,
   MaterialUnit,
   PipelineStage,
   Project,
+  ProjectClosingOutcome,
   ProjectNote,
   ProjectStatus,
   ProjectWithRelations,
   Quote,
+  QuoteCommercialStatus,
   QuoteLine,
   QuoteStatus,
   QuoteWithLines,
   QuoteWithProject,
   StaffUser,
+  TrashedClient,
+  TrashedProject,
   Visit,
   VisitSource,
 } from "@/lib/crm/types";
-import { DEFAULT_PIPELINE_STAGES, sortStages } from "@/lib/crm/pipeline";
+import {
+  CLOSED_STAGE_NAME,
+  DEFAULT_PIPELINE_STAGES,
+  isClosedStageName,
+  sortStages,
+} from "@/lib/crm/pipeline";
+import {
+  DEFAULT_FOLLOW_UP_SETTINGS,
+  sanitizeFollowUpSettings,
+} from "@/lib/crm/follow-ups";
 import {
   DEFAULT_MATERIAL_CATEGORIES,
   sortMaterialCategories,
 } from "@/lib/crm/material-categories";
 import { buildEntityCode } from "@/lib/crm/project-codes";
 import { sanitizeChileAddress } from "@/lib/crm/chile-address";
+import { quoteCostsFromLines } from "@/lib/crm/quote-summary";
+import { cachedRead, invalidateQueryCache } from "@/lib/db/query-cache";
+
+type CachedDoc = { id: string; data: DocumentData };
+
+/**
+ * Lee una colección completa a través de la caché. Firestore cobra una lectura
+ * por documento, así que estas consultas son las más caras de la app.
+ */
+async function readCollection(name: string): Promise<CachedDoc[]> {
+  return cachedRead(`collection:${name}`, async () => {
+    const snap = await getAdminDb().collection(name).get();
+    return snap.docs.map((doc) => ({ id: doc.id, data: doc.data() }));
+  });
+}
 
 function normalizeClientCode(code: string): string {
   if (code.startsWith("L-")) return `C-${code.slice(2)}`;
@@ -53,6 +81,7 @@ function mapClient(id: string, data: DocumentData): Client {
     address: data.address ?? null,
     driveFolderId: data.driveFolderId ?? null,
     driveFolderUrl: data.driveFolderUrl ?? null,
+    deletedAt: data.deletedAt ? toDate(data.deletedAt) : null,
     createdAt: toDate(data.createdAt),
     updatedAt: toDate(data.updatedAt),
   };
@@ -60,6 +89,11 @@ function mapClient(id: string, data: DocumentData): Client {
 
 function mapProject(id: string, data: DocumentData): Project {
   const createdAt = toDate(data.createdAt);
+  const followUpCount = Math.max(
+    0,
+    Math.floor(Number(data.followUpCount ?? 0)) || 0,
+  );
+  const nextNumber = Number(data.followUpNextNumber);
   return {
     id,
     publicCode: data.publicCode,
@@ -76,6 +110,28 @@ function mapProject(id: string, data: DocumentData): Project {
     driveFolderId: data.driveFolderId ?? null,
     driveFolderUrl: data.driveFolderUrl ?? null,
     driveSyncPending: Boolean(data.driveSyncPending),
+    followUpCount,
+    followUpStartedAt: data.followUpStartedAt
+      ? toDate(data.followUpStartedAt)
+      : null,
+    followUpLastAt: data.followUpLastAt ? toDate(data.followUpLastAt) : null,
+    followUpNextNumber:
+      Number.isFinite(nextNumber) && nextNumber > 0
+        ? Math.floor(nextNumber)
+        : null,
+    followUpNextAt: data.followUpNextAt ? toDate(data.followUpNextAt) : null,
+    followUpTaskId: data.followUpTaskId ?? null,
+    followUpTaskListId: data.followUpTaskListId ?? null,
+    closedAt: data.closedAt ? toDate(data.closedAt) : null,
+    closingOutcome:
+      data.closingOutcome === "APROBADO" || data.closingOutcome === "RECHAZADO"
+        ? (data.closingOutcome as ProjectClosingOutcome)
+        : null,
+    closedQuoteId: data.closedQuoteId ?? null,
+    closedAmount:
+      data.closedAmount == null ? null : Number(data.closedAmount) || 0,
+    deletedAt: data.deletedAt ? toDate(data.deletedAt) : null,
+    deletedWithClient: Boolean(data.deletedWithClient),
     createdAt,
     updatedAt: toDate(data.updatedAt),
   };
@@ -100,17 +156,6 @@ function mapVisit(id: string, data: DocumentData): Visit {
     createdAt,
     updatedAt: toDate(data.updatedAt),
   };
-}
-
-async function getVisitsForProject(projectId: string): Promise<Visit[]> {
-  const db = getAdminDb();
-  const snap = await db
-    .collection("visits")
-    .where("projectId", "==", projectId)
-    .get();
-  return snap.docs
-    .map((doc) => mapVisit(doc.id, doc.data()))
-    .sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime());
 }
 
 async function getFilesForProject(projectId: string): Promise<FileRef[]> {
@@ -171,6 +216,7 @@ export async function listProjectNotes(
         .collection("projects")
         .doc(projectId)
         .update({ notes: null, updatedAt: new Date() });
+      invalidateQueryCache("collection:projects");
       notes = [migrated];
     }
   }
@@ -224,6 +270,67 @@ export async function getProjectNoteById(
   const snap = await getAdminDb().collection("projectNotes").doc(noteId).get();
   if (!snap.exists) return null;
   return mapProjectNote(snap.id, snap.data()!);
+}
+
+/** Referencia registrada en el CRM para un archivo de Drive (o null). */
+export async function getFileRefByDriveFileId(
+  driveFileId: string,
+): Promise<FileRef | null> {
+  const snap = await getAdminDb()
+    .collection("fileRefs")
+    .where("driveFileId", "==", driveFileId)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  const data = doc.data();
+  return {
+    id: doc.id,
+    projectId: data.projectId,
+    driveFileId: data.driveFileId,
+    kind: data.kind,
+    name: data.name,
+    mimeType: data.mimeType ?? null,
+    webViewLink: data.webViewLink ?? null,
+    createdAt: toDate(data.createdAt),
+  };
+}
+
+export async function createAuditLog(input: {
+  action: AuditAction;
+  actorEmail: string;
+  target?: string | null;
+  detail?: string | null;
+}): Promise<AuditLog> {
+  const id = createId("audit");
+  const payload = {
+    action: input.action,
+    actorEmail: input.actorEmail,
+    target: input.target ?? null,
+    detail: input.detail ?? null,
+    createdAt: new Date(),
+  };
+  await getAdminDb().collection("auditLogs").doc(id).set(payload);
+  return { id, ...payload };
+}
+
+export async function listAuditLogs(limit = 100): Promise<AuditLog[]> {
+  const snap = await getAdminDb()
+    .collection("auditLogs")
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+  return snap.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      action: data.action as AuditAction,
+      actorEmail: data.actorEmail ?? "",
+      target: data.target ?? null,
+      detail: data.detail ?? null,
+      createdAt: toDate(data.createdAt),
+    };
+  });
 }
 
 export async function createFileRef(input: {
@@ -300,10 +407,11 @@ export async function upsertClient(input: {
     const existing = await db
       .collection("clients")
       .where("email", "==", email)
-      .limit(1)
+      .limit(5)
       .get();
-    if (!existing.empty) {
-      const doc = existing.docs[0];
+    const match = existing.docs.find((d) => !d.data().deletedAt);
+    if (match) {
+      const doc = match;
       const data = doc.data();
       const leadCode =
         data.leadCode && !String(data.leadCode).startsWith("TMP-")
@@ -328,10 +436,11 @@ export async function upsertClient(input: {
     const existing = await db
       .collection("clients")
       .where("phone", "==", phone)
-      .limit(1)
+      .limit(5)
       .get();
-    if (!existing.empty) {
-      const doc = existing.docs[0];
+    const match = existing.docs.find((d) => !d.data().deletedAt);
+    if (match) {
+      const doc = match;
       const data = doc.data();
       const leadCode =
         data.leadCode && !String(data.leadCode).startsWith("TMP-")
@@ -365,6 +474,7 @@ export async function upsertClient(input: {
     address: input.address ?? null,
     driveFolderId: null,
     driveFolderUrl: null,
+    deletedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -516,14 +626,18 @@ export async function getClientById(id: string): Promise<Client | null> {
 }
 
 export async function listClients(): Promise<ClientWithProjects[]> {
-  const db = getAdminDb();
-  const clientsSnap = await db.collection("clients").get();
-  const projectsSnap = await db.collection("projects").get();
-  const projects = projectsSnap.docs.map((d) => mapProject(d.id, d.data()));
+  const [clientDocs, projectDocs] = await Promise.all([
+    readCollection("clients"),
+    readCollection("projects"),
+  ]);
+  const projects = projectDocs
+    .map((d) => mapProject(d.id, d.data))
+    .filter((p) => !p.deletedAt);
 
-  return clientsSnap.docs
-    .map((doc) => {
-      const client = mapClient(doc.id, doc.data());
+  return clientDocs
+    .map((doc) => mapClient(doc.id, doc.data))
+    .filter((client) => !client.deletedAt)
+    .map((client) => {
       const clientProjects = projects
         .filter((p) => p.clientId === client.id)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -547,8 +661,137 @@ export async function getClientWithProjects(
     .get();
   const projects = snap.docs
     .map((d) => mapProject(d.id, d.data()))
+    .filter((p) => !p.deletedAt)
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   return { ...client, projects, projectCount: projects.length };
+}
+
+export async function deleteClient(id: string): Promise<void> {
+  const db = getAdminDb();
+  const projects = await db
+    .collection("projects")
+    .where("clientId", "==", id)
+    .get();
+  const stillHas = projects.docs.some((d) => !d.data().deletedAt);
+  if (stillHas) {
+    throw new Error("Client still has projects");
+  }
+  await db.collection("clients").doc(id).delete();
+}
+
+export async function setProjectTrashed(
+  id: string,
+  input: { deletedAt: Date | null; deletedWithClient?: boolean },
+): Promise<Project> {
+  const ref = getAdminDb().collection("projects").doc(id);
+  await ref.update({
+    deletedAt: input.deletedAt,
+    deletedWithClient: input.deletedAt
+      ? Boolean(input.deletedWithClient)
+      : false,
+    updatedAt: new Date(),
+  });
+  const snap = await ref.get();
+  return mapProject(snap.id, snap.data()!);
+}
+
+export async function setClientTrashed(
+  id: string,
+  deletedAt: Date | null,
+): Promise<Client> {
+  const ref = getAdminDb().collection("clients").doc(id);
+  await ref.update({ deletedAt, updatedAt: new Date() });
+  const snap = await ref.get();
+  return mapClient(snap.id, snap.data()!);
+}
+
+export async function listProjectsByClientId(
+  clientId: string,
+  options?: { includeDeleted?: boolean },
+): Promise<Project[]> {
+  const snap = await getAdminDb()
+    .collection("projects")
+    .where("clientId", "==", clientId)
+    .get();
+  return snap.docs
+    .map((d) => mapProject(d.id, d.data()))
+    .filter((p) => (options?.includeDeleted ? true : !p.deletedAt))
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function listTrashedProjects(): Promise<TrashedProject[]> {
+  const [projectDocs, clientDocs] = await Promise.all([
+    readCollection("projects"),
+    readCollection("clients"),
+  ]);
+  const clientsById = new Map(
+    clientDocs.map((d) => [d.id, mapClient(d.id, d.data)]),
+  );
+  return projectDocs
+    .map((d) => mapProject(d.id, d.data))
+    .filter((p) => Boolean(p.deletedAt))
+    .sort(
+      (a, b) => (b.deletedAt?.getTime() ?? 0) - (a.deletedAt?.getTime() ?? 0),
+    )
+    .map((project) => ({
+      ...project,
+      client: clientsById.get(project.clientId) ?? null,
+    }));
+}
+
+export async function listTrashedClients(): Promise<TrashedClient[]> {
+  const [clientDocs, projectDocs] = await Promise.all([
+    readCollection("clients"),
+    readCollection("projects"),
+  ]);
+  const projects = projectDocs.map((d) => mapProject(d.id, d.data));
+  return clientDocs
+    .map((d) => mapClient(d.id, d.data))
+    .filter((c) => Boolean(c.deletedAt))
+    .sort(
+      (a, b) => (b.deletedAt?.getTime() ?? 0) - (a.deletedAt?.getTime() ?? 0),
+    )
+    .map((client) => ({
+      ...client,
+      projects: projects
+        .filter((p) => p.clientId === client.id)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+    }));
+}
+
+export async function hardDeleteProject(id: string): Promise<void> {
+  const db = getAdminDb();
+  const quotesSnap = await db
+    .collection("quotes")
+    .where("projectId", "==", id)
+    .get();
+  const quoteIds = quotesSnap.docs.map((d) => d.id);
+
+  const batch = db.batch();
+  for (const doc of quotesSnap.docs) batch.delete(doc.ref);
+
+  for (const quoteId of quoteIds) {
+    const linesSnap = await db
+      .collection("quoteLines")
+      .where("quoteId", "==", quoteId)
+      .get();
+    for (const doc of linesSnap.docs) batch.delete(doc.ref);
+  }
+
+  for (const collection of ["projectNotes", "visits", "fileRefs"]) {
+    const snap = await db
+      .collection(collection)
+      .where("projectId", "==", id)
+      .get();
+    for (const doc of snap.docs) batch.delete(doc.ref);
+  }
+
+  batch.delete(db.collection("projects").doc(id));
+  await batch.commit();
+}
+
+export async function hardDeleteClient(id: string): Promise<void> {
+  await getAdminDb().collection("clients").doc(id).delete();
 }
 
 export async function createProject(input: {
@@ -578,6 +821,19 @@ export async function createProject(input: {
     driveFolderId: input.driveFolderId ?? null,
     driveFolderUrl: input.driveFolderUrl ?? null,
     driveSyncPending: input.driveSyncPending ?? false,
+    followUpCount: 0,
+    followUpStartedAt: null,
+    followUpLastAt: null,
+    followUpNextNumber: null,
+    followUpNextAt: null,
+    followUpTaskId: null,
+    followUpTaskListId: null,
+    closedAt: null,
+    closingOutcome: null,
+    closedQuoteId: null,
+    closedAmount: null,
+    deletedAt: null,
+    deletedWithClient: false,
     createdAt: now,
     updatedAt: now,
   };
@@ -607,6 +863,7 @@ export async function updateProject(
   data: Partial<
     Pick<
       Project,
+      | "clientId"
       | "status"
       | "stageId"
       | "boardOrder"
@@ -616,6 +873,17 @@ export async function updateProject(
       | "driveFolderUrl"
       | "driveSyncPending"
       | "calendarEventId"
+      | "followUpCount"
+      | "followUpStartedAt"
+      | "followUpLastAt"
+      | "followUpNextNumber"
+      | "followUpNextAt"
+      | "followUpTaskId"
+      | "followUpTaskListId"
+      | "closedAt"
+      | "closingOutcome"
+      | "closedQuoteId"
+      | "closedAmount"
     >
   >,
 ): Promise<Project> {
@@ -628,13 +896,28 @@ export async function updateProject(
 export async function getProjectById(
   id: string,
 ): Promise<ProjectWithRelations | null> {
-  const snap = await getAdminDb().collection("projects").doc(id).get();
-  if (!snap.exists) return null;
-  const project = mapProject(snap.id, snap.data()!);
-  const client = await getClientById(project.clientId);
-  if (!client) return null;
-  const [visits, files, projectNotes] = await Promise.all([
-    getVisitsForProject(project.id),
+  // Proyecto, cliente y visitas salen de las colecciones cacheadas; solo
+  // archivos y notas necesitan consulta propia.
+  const [projectDocs, clientDocs, visitDocs] = await Promise.all([
+    readCollection("projects"),
+    readCollection("clients"),
+    readCollection("visits"),
+  ]);
+
+  const projectDoc = projectDocs.find((doc) => doc.id === id);
+  if (!projectDoc) return null;
+  const project = mapProject(projectDoc.id, projectDoc.data);
+
+  const clientDoc = clientDocs.find((doc) => doc.id === project.clientId);
+  if (!clientDoc) return null;
+  const client = mapClient(clientDoc.id, clientDoc.data);
+
+  const visits = visitDocs
+    .filter((doc) => doc.data.projectId === id)
+    .map((doc) => mapVisit(doc.id, doc.data))
+    .sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime());
+
+  const [files, projectNotes] = await Promise.all([
     getFilesForProject(project.id),
     listProjectNotes(project.id),
   ]);
@@ -656,26 +939,20 @@ export async function getProjectByCalendarEventId(
 export async function listProjects(options?: {
   status?: ProjectStatus;
 }): Promise<ProjectWithRelations[]> {
-  const db = getAdminDb();
-  let query: Query = db.collection("projects");
-  if (options?.status) {
-    query = query.where("status", "==", options.status);
-  }
-
-  // 3 lecturas en lote en vez de 1 + 2N (clientes/visitas por proyecto).
-  const [projectsSnap, clientsSnap, visitsSnap] = await Promise.all([
-    query.get(),
-    db.collection("clients").get(),
-    db.collection("visits").get(),
+  // 3 lecturas en lote (cacheadas) en vez de 1 + 2N por proyecto.
+  const [projectDocs, clientDocs, visitDocs] = await Promise.all([
+    readCollection("projects"),
+    readCollection("clients"),
+    readCollection("visits"),
   ]);
 
   const clientsById = new Map(
-    clientsSnap.docs.map((d) => [d.id, mapClient(d.id, d.data())]),
+    clientDocs.map((d) => [d.id, mapClient(d.id, d.data)]),
   );
 
   const visitsByProject = new Map<string, Visit[]>();
-  for (const doc of visitsSnap.docs) {
-    const visit = mapVisit(doc.id, doc.data());
+  for (const doc of visitDocs) {
+    const visit = mapVisit(doc.id, doc.data);
     const list = visitsByProject.get(visit.projectId) ?? [];
     list.push(visit);
     visitsByProject.set(visit.projectId, list);
@@ -684,8 +961,10 @@ export async function listProjects(options?: {
     list.sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime());
   }
 
-  return projectsSnap.docs
-    .map((d) => mapProject(d.id, d.data()))
+  return projectDocs
+    .map((d) => mapProject(d.id, d.data))
+    .filter((project) => !options?.status || project.status === options.status)
+    .filter((project) => !project.deletedAt)
     .sort(compareProjectsBoardOrder)
     .flatMap((project) => {
       const client = clientsById.get(project.clientId);
@@ -731,9 +1010,10 @@ export async function countVisitsBetween(
   start: Date,
   end: Date,
 ): Promise<number> {
-  const snap = await getAdminDb().collection("visits").get();
-  return snap.docs.filter((doc) => {
-    const at = toDate(doc.data().scheduledAt).getTime();
+  // Reutiliza la colección cacheada: el dashboard ya la leyó para el tablero.
+  const docs = await readCollection("visits");
+  return docs.filter((doc) => {
+    const at = toDate(doc.data.scheduledAt).getTime();
     return at >= start.getTime() && at <= end.getTime();
   }).length;
 }
@@ -741,11 +1021,10 @@ export async function countVisitsBetween(
 export async function countProjectsByStatus(
   status: ProjectStatus,
 ): Promise<number> {
-  const snap = await getAdminDb()
-    .collection("projects")
-    .where("status", "==", status)
-    .get();
-  return snap.size;
+  const docs = await readCollection("projects");
+  return docs.filter(
+    (doc) => doc.data.status === status && !doc.data.deletedAt,
+  ).length;
 }
 
 export async function listPendingDriveProjects(): Promise<Project[]> {
@@ -754,7 +1033,9 @@ export async function listPendingDriveProjects(): Promise<Project[]> {
     .where("driveSyncPending", "==", true)
     .limit(50)
     .get();
-  return snap.docs.map((d) => mapProject(d.id, d.data()));
+  return snap.docs
+    .map((d) => mapProject(d.id, d.data()))
+    .filter((p) => !p.deletedAt);
 }
 
 function mapChileAddress(value: unknown): ChileAddress | null {
@@ -834,6 +1115,40 @@ export async function updateCompanySettings(input: {
     phone: payload.phone,
     updatedAt: now,
   };
+}
+
+export async function getFollowUpSettings(): Promise<FollowUpSettings> {
+  const snap = await getAdminDb().collection("meta").doc("followUps").get();
+  if (!snap.exists) return DEFAULT_FOLLOW_UP_SETTINGS;
+  const data = snap.data();
+  return sanitizeFollowUpSettings({
+    count: data?.count,
+    intervalDays: data?.intervalDays,
+    updatedAt: data?.updatedAt ? toDate(data.updatedAt) : null,
+  });
+}
+
+export async function updateFollowUpSettings(input: {
+  count: number;
+  intervalDays: number[];
+}): Promise<FollowUpSettings> {
+  const next = sanitizeFollowUpSettings({
+    count: input.count,
+    intervalDays: input.intervalDays,
+    updatedAt: new Date(),
+  });
+  await getAdminDb()
+    .collection("meta")
+    .doc("followUps")
+    .set(
+      {
+        count: next.count,
+        intervalDays: next.intervalDays,
+        updatedAt: next.updatedAt,
+      },
+      { merge: true },
+    );
+  return next;
 }
 
 export async function getCalendarSyncToken(): Promise<string | null> {
@@ -921,20 +1236,33 @@ function mapStage(id: string, data: DocumentData): PipelineStage {
 
 export async function listPipelineStages(): Promise<PipelineStage[]> {
   const db = getAdminDb();
-  const snap = await db.collection("pipelineStages").get();
-  if (snap.empty) {
+  const docs = await readCollection("pipelineStages");
+  if (docs.length === 0) {
     return ensureDefaultPipelineStages();
   }
-  const stages = sortStages(snap.docs.map((d) => mapStage(d.id, d.data())));
+  let stages = sortStages(docs.map((d) => mapStage(d.id, d.data)));
+  if (!stages.some((s) => isClosedStageName(s.name))) {
+    const now = new Date();
+    const id = createId("stg");
+    const payload = {
+      name: CLOSED_STAGE_NAME,
+      order: stages.length,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.collection("pipelineStages").doc(id).set(payload);
+    invalidateQueryCache("collection:pipelineStages");
+    stages = sortStages([...stages, { id, ...payload }]);
+  }
   await assignMissingProjectStages(stages[0]?.id ?? null);
   return stages;
 }
 
 export async function ensureDefaultPipelineStages(): Promise<PipelineStage[]> {
   const db = getAdminDb();
-  const existing = await db.collection("pipelineStages").get();
-  if (!existing.empty) {
-    return sortStages(existing.docs.map((d) => mapStage(d.id, d.data())));
+  const existing = await readCollection("pipelineStages");
+  if (existing.length > 0) {
+    return sortStages(existing.map((d) => mapStage(d.id, d.data)));
   }
 
   const now = new Date();
@@ -955,6 +1283,7 @@ export async function ensureDefaultPipelineStages(): Promise<PipelineStage[]> {
   });
 
   await batch.commit();
+  invalidateQueryCache("collection:pipelineStages");
   await assignMissingProjectStages(stages[0]?.id ?? null);
   return stages;
 }
@@ -967,16 +1296,19 @@ export async function getFirstPipelineStageId(): Promise<string | null> {
 async function assignMissingProjectStages(fallbackStageId: string | null) {
   if (!fallbackStageId) return;
   const db = getAdminDb();
-  const snap = await db.collection("projects").get();
+  const docs = await readCollection("projects");
+  const pending = docs.filter((doc) => !doc.data.stageId);
+  if (pending.length === 0) return;
+
   const batch = db.batch();
-  let writes = 0;
-  for (const doc of snap.docs) {
-    if (!doc.data().stageId) {
-      batch.update(doc.ref, { stageId: fallbackStageId, updatedAt: new Date() });
-      writes += 1;
-    }
+  for (const doc of pending) {
+    batch.update(db.collection("projects").doc(doc.id), {
+      stageId: fallbackStageId,
+      updatedAt: new Date(),
+    });
   }
-  if (writes > 0) await batch.commit();
+  await batch.commit();
+  invalidateQueryCache("collection:projects");
 }
 
 export async function createPipelineStage(input: {
@@ -1001,6 +1333,13 @@ export async function updatePipelineStage(
   data: Partial<Pick<PipelineStage, "name" | "order">>,
 ): Promise<PipelineStage> {
   const ref = getAdminDb().collection("pipelineStages").doc(id);
+  if (data.name !== undefined) {
+    const current = await ref.get();
+    const currentName = String(current.data()?.name ?? "");
+    if (isClosedStageName(currentName)) {
+      throw new Error("La etapa Cerrado es fija y no se puede renombrar");
+    }
+  }
   await ref.update(
     stripUndefined({
       name: data.name?.trim(),
@@ -1016,6 +1355,10 @@ export async function deletePipelineStage(id: string): Promise<void> {
   const stages = await listPipelineStages();
   if (stages.length <= 1) {
     throw new Error("Debe existir al menos una etapa en el pipeline");
+  }
+  const target = stages.find((s) => s.id === id);
+  if (target && isClosedStageName(target.name)) {
+    throw new Error("La etapa Cerrado es fija y no se puede eliminar");
   }
   const fallback = stages.find((s) => s.id !== id);
   if (!fallback) {
@@ -1044,8 +1387,16 @@ export async function reorderPipelineStages(
   orderedIds: string[],
 ): Promise<PipelineStage[]> {
   const db = getAdminDb();
+  const current = await listPipelineStages();
+  const closedIds = current
+    .filter((s) => isClosedStageName(s.name))
+    .map((s) => s.id);
+  const finalOrder = [
+    ...orderedIds.filter((id) => !closedIds.includes(id)),
+    ...closedIds,
+  ];
   const batch = db.batch();
-  orderedIds.forEach((id, index) => {
+  finalOrder.forEach((id, index) => {
     batch.update(db.collection("pipelineStages").doc(id), {
       order: index,
       updatedAt: new Date(),
@@ -1078,10 +1429,10 @@ function mapMaterialCategory(id: string, data: DocumentData): MaterialCategory {
 }
 
 export async function listMaterialCategories(): Promise<MaterialCategory[]> {
-  const snap = await getAdminDb().collection("materialCategories").get();
-  if (snap.empty) return ensureDefaultMaterialCategories();
+  const docs = await readCollection("materialCategories");
+  if (docs.length === 0) return ensureDefaultMaterialCategories();
   return sortMaterialCategories(
-    snap.docs.map((d) => mapMaterialCategory(d.id, d.data())),
+    docs.map((d) => mapMaterialCategory(d.id, d.data)),
   );
 }
 
@@ -1089,10 +1440,10 @@ export async function ensureDefaultMaterialCategories(): Promise<
   MaterialCategory[]
 > {
   const db = getAdminDb();
-  const existing = await db.collection("materialCategories").get();
-  if (!existing.empty) {
+  const existing = await readCollection("materialCategories");
+  if (existing.length > 0) {
     return sortMaterialCategories(
-      existing.docs.map((d) => mapMaterialCategory(d.id, d.data())),
+      existing.map((d) => mapMaterialCategory(d.id, d.data)),
     );
   }
 
@@ -1114,6 +1465,7 @@ export async function ensureDefaultMaterialCategories(): Promise<
   });
 
   await batch.commit();
+  invalidateQueryCache("collection:materialCategories");
   return categories;
 }
 
@@ -1185,9 +1537,9 @@ export async function deleteMaterialCategory(id: string): Promise<void> {
 
 export async function listMaterials(): Promise<Material[]> {
   await listMaterialCategories();
-  const snap = await getAdminDb().collection("materials").get();
-  return snap.docs
-    .map((d) => mapMaterial(d.id, d.data()))
+  const docs = await readCollection("materials");
+  return docs
+    .map((d) => mapMaterial(d.id, d.data))
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
@@ -1283,25 +1635,55 @@ export async function deleteAllMaterials(): Promise<number> {
   return deleted;
 }
 
+function mapCommercialStatus(value: unknown): QuoteCommercialStatus {
+  if (value === "SENT" || value === "ACCEPTED" || value === "REJECTED") {
+    return value;
+  }
+  return "NONE";
+}
+
 function mapQuote(id: string, data: DocumentData): Quote {
   return {
     id,
     projectId: data.projectId,
+    quoteCode:
+      typeof data.quoteCode === "string" && data.quoteCode.trim()
+        ? data.quoteCode.trim()
+        : null,
     title: data.title ?? "Presupuesto",
     status: (data.status as QuoteStatus) ?? "DRAFT",
+    commercialStatus: mapCommercialStatus(data.commercialStatus),
     mermaPercent: Number(data.mermaPercent ?? 0),
     utilidadPercent: Number(data.utilidadPercent ?? 0),
     extraPercent: Number(data.extraPercent ?? 0),
     discountPercent: Number(data.discountPercent ?? 0),
+    includeIva: Boolean(data.includeIva),
     warrantyMonths: Number(data.warrantyMonths ?? 0),
     installmentCount: Number(data.installmentCount ?? 0),
     installmentInterestFree: Boolean(data.installmentInterestFree),
     observations:
       typeof data.observations === "string" ? data.observations : "",
     showObservations: data.showObservations !== false,
+    costs: mapQuoteCosts(data.costs),
     createdAt: toDate(data.createdAt),
     updatedAt: toDate(data.updatedAt),
   };
+}
+
+function mapQuoteCosts(value: unknown): QuoteCosts | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Record<string, unknown>;
+  const labor = Number(data.labor);
+  const logistics = Number(data.logistics);
+  const materials = Number(data.materials);
+  if (
+    !Number.isFinite(labor) ||
+    !Number.isFinite(logistics) ||
+    !Number.isFinite(materials)
+  ) {
+    return null;
+  }
+  return { labor, logistics, materials };
 }
 
 function mapQuoteLine(id: string, data: DocumentData): QuoteLine {
@@ -1324,35 +1706,87 @@ function mapQuoteLine(id: string, data: DocumentData): QuoteLine {
 export async function listQuotesByProject(
   projectId: string,
 ): Promise<Quote[]> {
-  const snap = await getAdminDb()
-    .collection("quotes")
-    .where("projectId", "==", projectId)
-    .get();
-  return snap.docs
-    .map((d) => mapQuote(d.id, d.data()))
+  const docs = await readCollection("quotes");
+  return docs
+    .map((d) => mapQuote(d.id, d.data))
+    .filter((quote) => quote.projectId === projectId)
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 }
 
 export async function listRecentQuotes(
   limit = 50,
 ): Promise<QuoteWithProject[]> {
-  const snap = await getAdminDb().collection("quotes").limit(limit * 2).get();
-  const quotes = snap.docs
-    .map((d) => mapQuote(d.id, d.data()))
+  // Todo se resuelve sobre las colecciones cacheadas: sin consultas por
+  // cotización (antes eran ~5 lecturas extra por cada una).
+  const [quoteDocs, projectDocs, clientDocs] = await Promise.all([
+    readCollection("quotes"),
+    readCollection("projects"),
+    readCollection("clients"),
+  ]);
+
+  const quotes = quoteDocs
+    .map((d) => mapQuote(d.id, d.data))
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
     .slice(0, limit);
 
+  const projectsById = new Map<string, Project>();
+  for (const doc of projectDocs) {
+    const project = mapProject(doc.id, doc.data);
+    if (project.deletedAt) continue;
+    projectsById.set(project.id, project);
+  }
+  const clientsById = new Map<string, Client>(
+    clientDocs.map((doc) => [doc.id, mapClient(doc.id, doc.data)]),
+  );
+
   const result: QuoteWithProject[] = [];
   for (const quote of quotes) {
-    const project = await getProjectById(quote.projectId);
+    const project = projectsById.get(quote.projectId);
     if (!project) continue;
-    result.push({
-      ...quote,
-      project,
-      client: project.client,
-    });
+    const client = clientsById.get(project.clientId);
+    if (!client) continue;
+    result.push({ ...quote, project, client });
   }
   return result;
+}
+
+/** Líneas de un conjunto acotado de cotizaciones (evita leer la colección). */
+export async function listQuoteLinesByQuoteIds(
+  quoteIds: string[],
+): Promise<QuoteLine[]> {
+  if (quoteIds.length === 0) return [];
+  const db = getAdminDb();
+  const unique = [...new Set(quoteIds)];
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += 30) {
+    chunks.push(unique.slice(i, i + 30));
+  }
+
+  const snaps = await Promise.all(
+    chunks.map((chunk) =>
+      db.collection("quoteLines").where("quoteId", "in", chunk).get(),
+    ),
+  );
+  return snaps.flatMap((snap) =>
+    snap.docs.map((d) => mapQuoteLine(d.id, d.data())),
+  );
+}
+
+/** Todas las cotizaciones (sin líneas ni relaciones). */
+export async function listAllQuotes(): Promise<Quote[]> {
+  const docs = await readCollection("quotes");
+  return docs
+    .map((d) => mapQuote(d.id, d.data))
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+}
+
+/**
+ * Todas las líneas de cotización. Es la colección más grande de la base, así
+ * que conviene usar listQuoteLinesByQuoteIds siempre que se pueda.
+ */
+export async function listAllQuoteLines(): Promise<QuoteLine[]> {
+  const docs = await readCollection("quoteLines");
+  return docs.map((d) => mapQuoteLine(d.id, d.data));
 }
 
 export async function getQuoteById(
@@ -1371,31 +1805,87 @@ export async function getQuoteById(
   return { ...quote, lines };
 }
 
+/** Busca cotización por código (ej. P1201). Comparación case-insensitive. */
+export async function getQuoteByCode(
+  code: string,
+): Promise<QuoteWithProject | null> {
+  const normalized = code.trim().replace(/^#/, "").toUpperCase();
+  if (!normalized) return null;
+
+  const docs = await readCollection("quotes");
+  const match = docs.find((d) => {
+    const raw = d.data.quoteCode;
+    return (
+      typeof raw === "string" &&
+      raw.trim().replace(/^#/, "").toUpperCase() === normalized
+    );
+  });
+  if (!match) return null;
+
+  const quote = mapQuote(match.id, match.data);
+  const project = await getProjectById(quote.projectId);
+  if (!project) return null;
+  return { ...quote, project, client: project.client };
+}
+
 export async function createQuote(input: {
   projectId: string;
   title?: string;
+  quoteCode?: string;
 }): Promise<Quote> {
   const db = getAdminDb();
   const id = createId("quote");
   const now = new Date();
+  const quoteCode = input.quoteCode?.trim() || null;
   const payload = {
     projectId: input.projectId,
-    title: input.title?.trim() || "Presupuesto de costos",
+    quoteCode,
+    title:
+      input.title?.trim() ||
+      (quoteCode ? `Cotización #${quoteCode}` : "Presupuesto de costos"),
     status: "DRAFT" as QuoteStatus,
+    commercialStatus: "NONE" as QuoteCommercialStatus,
     mermaPercent: 0,
     utilidadPercent: 0,
     extraPercent: 0,
     discountPercent: 0,
+    includeIva: false,
     warrantyMonths: 0,
     installmentCount: 0,
     installmentInterestFree: false,
     observations: "",
     showObservations: true,
+    costs: EMPTY_QUOTE_COSTS,
     createdAt: now,
     updatedAt: now,
   };
   await db.collection("quotes").doc(id).set(payload);
   return mapQuote(id, payload);
+}
+
+const EMPTY_QUOTE_COSTS: QuoteCosts = {
+  labor: 0,
+  logistics: 0,
+  materials: 0,
+};
+
+/** Recalcula y guarda los costos de la cotización desde sus líneas. */
+export async function setQuoteCosts(
+  quoteId: string,
+  costs: QuoteCosts,
+): Promise<void> {
+  await getAdminDb().collection("quotes").doc(quoteId).update({ costs });
+  invalidateQueryCache("collection:quotes");
+}
+
+async function recalcQuoteCosts(quoteId: string): Promise<QuoteCosts> {
+  const snap = await getAdminDb()
+    .collection("quoteLines")
+    .where("quoteId", "==", quoteId)
+    .get();
+  return quoteCostsFromLines(
+    snap.docs.map((d) => mapQuoteLine(d.id, d.data())),
+  );
 }
 
 export async function updateQuote(
@@ -1405,10 +1895,12 @@ export async function updateQuote(
       Quote,
       | "title"
       | "status"
+      | "commercialStatus"
       | "mermaPercent"
       | "utilidadPercent"
       | "extraPercent"
       | "discountPercent"
+      | "includeIva"
       | "warrantyMonths"
       | "installmentCount"
       | "installmentInterestFree"
@@ -1422,10 +1914,12 @@ export async function updateQuote(
     stripUndefined({
       title: data.title?.trim(),
       status: data.status,
+      commercialStatus: data.commercialStatus,
       mermaPercent: data.mermaPercent,
       utilidadPercent: data.utilidadPercent,
       extraPercent: data.extraPercent,
       discountPercent: data.discountPercent,
+      includeIva: data.includeIva,
       warrantyMonths: data.warrantyMonths,
       installmentCount: data.installmentCount,
       installmentInterestFree: data.installmentInterestFree,
@@ -1468,6 +1962,7 @@ export async function addQuoteLines(input: {
     .collection("quoteLines")
     .where("quoteId", "==", input.quoteId)
     .get();
+  const existingLines = existing.docs.map((d) => mapQuoteLine(d.id, d.data()));
   let sortOrder = existing.size;
   const now = new Date();
   const batch = db.batch();
@@ -1500,6 +1995,7 @@ export async function addQuoteLines(input: {
 
   batch.update(db.collection("quotes").doc(input.quoteId), {
     updatedAt: now,
+    costs: quoteCostsFromLines([...existingLines, ...created]),
   });
   await batch.commit();
   return created;
@@ -1523,6 +2019,7 @@ export async function updateQuoteLine(
   const quoteId = existing.data()!.quoteId as string;
   await getAdminDb().collection("quotes").doc(quoteId).update({
     updatedAt: now,
+    costs: await recalcQuoteCosts(quoteId),
   });
   const snap = await ref.get();
   return mapQuoteLine(snap.id, snap.data()!);
@@ -1536,6 +2033,7 @@ export async function deleteQuoteLine(lineId: string): Promise<void> {
   await ref.delete();
   await getAdminDb().collection("quotes").doc(quoteId).update({
     updatedAt: new Date(),
+    costs: await recalcQuoteCosts(quoteId),
   });
 }
 
@@ -1545,4 +2043,66 @@ export async function getQuoteLineById(
   const snap = await getAdminDb().collection("quoteLines").doc(lineId).get();
   if (!snap.exists) return null;
   return mapQuoteLine(snap.id, snap.data()!);
+}
+
+/** Clona una cotización (campos + líneas) hacia otro u el mismo proyecto. */
+export async function cloneQuoteToProject(input: {
+  sourceQuoteId: string;
+  targetProjectId: string;
+  quoteCode: string;
+  title?: string;
+}): Promise<QuoteWithLines> {
+  const source = await getQuoteById(input.sourceQuoteId);
+  if (!source) throw new Error("Quote not found");
+
+  const db = getAdminDb();
+  const id = createId("quote");
+  const now = new Date();
+  const quoteCode = input.quoteCode.trim();
+  const quotePayload = {
+    projectId: input.targetProjectId,
+    quoteCode,
+    title: input.title?.trim() || `Cotización #${quoteCode}`,
+    status: "DRAFT" as QuoteStatus,
+    commercialStatus: "NONE" as QuoteCommercialStatus,
+    mermaPercent: source.mermaPercent,
+    utilidadPercent: source.utilidadPercent,
+    extraPercent: source.extraPercent,
+    discountPercent: source.discountPercent,
+    includeIva: source.includeIva,
+    warrantyMonths: source.warrantyMonths,
+    installmentCount: source.installmentCount,
+    installmentInterestFree: source.installmentInterestFree,
+    observations: source.observations,
+    showObservations: source.showObservations,
+    costs: source.costs ?? quoteCostsFromLines(source.lines),
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const batch = db.batch();
+  batch.set(db.collection("quotes").doc(id), quotePayload);
+
+  const lines: QuoteLine[] = [];
+  for (const line of source.lines) {
+    const lineId = createId("qline");
+    const linePayload = {
+      quoteId: id,
+      materialId: line.materialId,
+      name: line.name,
+      categoryId: line.categoryId,
+      categoryName: line.categoryName,
+      unit: line.unit,
+      unitCost: line.unitCost,
+      quantity: line.quantity,
+      sortOrder: line.sortOrder,
+      createdAt: now,
+      updatedAt: now,
+    };
+    batch.set(db.collection("quoteLines").doc(lineId), linePayload);
+    lines.push(mapQuoteLine(lineId, linePayload));
+  }
+
+  await batch.commit();
+  return { ...mapQuote(id, quotePayload), lines };
 }

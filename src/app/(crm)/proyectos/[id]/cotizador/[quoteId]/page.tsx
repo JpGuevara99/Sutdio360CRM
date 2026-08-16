@@ -3,6 +3,7 @@ import { TopBar } from "@/components/crm/TopBar";
 import { PageBody } from "@/components/crm/PageBody";
 import { QuoteBuilder } from "@/components/crm/QuoteBuilder";
 import { formatEntityCode } from "@/lib/crm/project-codes";
+import { requirePageSession } from "@/lib/auth/require-page-session";
 import { db } from "@/lib/db";
 
 export default async function QuoteEditorPage({
@@ -15,6 +16,8 @@ export default async function QuoteEditorPage({
   const { id, quoteId } = await params;
   const { from } = await searchParams;
   const entryFrom = from === "cotizador" ? "cotizador" : "proyecto";
+
+  await requirePageSession();
 
   const [project, quote, materials, categories] = await Promise.all([
     db.getProjectById(id),

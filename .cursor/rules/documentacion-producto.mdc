@@ -1,0 +1,16 @@
+---
+description: Cómo escribir y actualizar la documentación del CRM en docs/
+globs: docs/**/*.md
+alwaysApply: false
+---
+
+# Documentación del producto
+
+La carpeta `docs/` explica el CRM a personas, no al código.
+
+- Un archivo = un área (Clientes, Proyectos, Cotizador, Seguridad…).
+- Audiencias: cliente (`docs/seguridad.md`), equipo de uso, o quien configura. No mezclar las tres en el mismo texto.
+- Seguir la plantilla de `docs/como-documentar.md`: para qué sirve, qué se puede hacer, cómo, reglas, errores frecuentes.
+- Español claro. Sin nombres de funciones, rutas internas ni secretos.
+- Al terminar un documento nuevo, marcarlo como Listo en `docs/README.md`.
+- Si cambia una función de la app, actualizar el documento de esa área en el mismo cambio.

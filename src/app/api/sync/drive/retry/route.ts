@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { isValidCronSecret } from "@/lib/auth/cron-secret";
 import { retryPendingDriveFolders } from "@/lib/crm/drive-sync";
 
 export async function POST(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  const header = request.headers.get("x-cron-secret");
-  const session = await getSessionFromRequest(request);
+  const fromCron = isValidCronSecret(request.headers.get("x-cron-secret"));
+  const session = fromCron ? null : await getSessionFromRequest(request);
 
-  if (!(session || (cronSecret && header === cronSecret))) {
+  if (!fromCron && !session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

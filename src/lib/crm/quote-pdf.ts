@@ -196,8 +196,29 @@ export async function buildQuotePdfBuffer(options: {
   const xTotal = xPu + COL_PU;
   const rightEdge = MARGIN + CONTENT_W;
 
+  const showObservations =
+    quote.showObservations !== false && observations.length > 0;
+  const bannerH = 72;
+  const footerReserve = logo ? 56 : 42;
+  /** Espacio reservado solo en páginas intermedias (sin bloque de cierre). */
+  const CONTINUATION_BOTTOM = 36;
+
+  const obsLines = showObservations
+    ? wrapPdfText(font, observations, 8, CONTENT_W)
+    : [];
+  /** Totales (+ obs) van pegados bajo la tabla. */
+  const totalsBlockH =
+    16 + 16 + 18 + (summary.includeIva ? 18 : 0);
+  const obsBlockH = showObservations ? 10 + 14 + obsLines.length * 11 : 0;
+  const totalsSectionH = 10 + totalsBlockH + obsBlockH;
+  /** Banner comercial, inmediatamente bajo los totales. */
+  const bannerSectionH = 12 + bannerH + 14;
+  const tableClosingReserve = totalsSectionH + bannerSectionH;
+
   let page = pdf.addPage([PAGE_W, PAGE_H]);
   let y = PAGE_H - MARGIN;
+  /** True cuando la página actual ya tiene filas/categorías de la tabla. */
+  let pageHasTableContent = false;
 
   const drawLeft = (
     text: string,
@@ -273,25 +294,76 @@ export async function buildQuotePdfBuffer(options: {
     });
   };
 
-  const showObservations =
-    quote.showObservations !== false && observations.length > 0;
-  const bannerH = 72;
-  const footerReserve = logo ? 56 : 42;
-  /** Espacio reservado solo en páginas intermedias (sin banner ni pie comercial). */
-  const CONTINUATION_BOTTOM = 36;
+  const drawTableHeader = () => {
+    page.drawRectangle({
+      x: MARGIN,
+      y: y - HEADER_H + 2,
+      width: CONTENT_W,
+      height: HEADER_H,
+      color: headerBg,
+    });
+    const hy = y - 12;
+    // Misma lógica que el PDF de referencia (0044): offsets fijos, no centrado forzado.
+    drawLeft("It.", MARGIN + 6, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    drawLeft("DENOMINACION", xName + 6, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    drawLeft("UNIDADES", xUnit + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    if (detailed) {
+      drawLeft("CANT.", xQty + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+      drawRightIn("P/U", xPu, COL_PU, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+      drawRightIn("TOTAL", xTotal, COL_TOTAL, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    } else {
+      drawLeft("CANTIDAD", xQty + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
+    }
+    y -= HEADER_H;
+  };
 
-  const ensureSpace = (need: number, withTableHeader = true) => {
-    if (y - need < CONTINUATION_BOTTOM) {
-      page = pdf.addPage([PAGE_W, PAGE_H]);
-      y = PAGE_H - MARGIN;
-      if (withTableHeader) drawTableHeader();
+  const startNewTablePage = () => {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+    pageHasTableContent = false;
+    drawTableHeader();
+    pageHasTableContent = true;
+  };
+
+  /**
+   * @param need alto a dibujar ahora
+   * @param tableRemainingH alto de tabla que aún queda (incluye `need`)
+   */
+  const ensureSpace = (need: number, tableRemainingH: number) => {
+    const endFloor = footerReserve + 8 + tableClosingReserve;
+    const restAfter = Math.max(0, tableRemainingH - need);
+    // Si lo que queda de tabla + totales + banner cabe en una página limpia,
+    // reservar ese espacio para no dejar totales huérfanos ni apretados.
+    const remainderFitsAlone =
+      restAfter + need + tableClosingReserve <=
+      PAGE_H - MARGIN - CONTINUATION_BOTTOM - HEADER_H;
+    const bottomLimit =
+      remainderFitsAlone || restAfter === 0 ? endFloor : CONTINUATION_BOTTOM;
+
+    if (y - need < bottomLimit) {
+      startNewTablePage();
     }
   };
 
-  /** Antes de totales/banner/pie: si no cabe el bloque final, nueva página limpia. */
-  const ensureEndMatterSpace = (need: number) => {
-    if (y - need < footerReserve + 8) {
+  /** Totales siempre bajo la última fila de la tabla (nunca anclados al pie). */
+  const beginTotals = () => {
+    const floor = footerReserve + 8 + bannerSectionH;
+    if (y - totalsSectionH < floor) {
       page = pdf.addPage([PAGE_W, PAGE_H]);
+      pageHasTableContent = false;
+      y = PAGE_H - MARGIN;
+    }
+  };
+
+  /**
+   * Banner siempre en el mismo bloque que los totales: justo debajo de
+   * TOTAL NETO / TOTAL + IVA (y observaciones si hay). 1 página o varias.
+   */
+  const beginBanner = () => {
+    const floor = footerReserve + 8;
+    if (y - bannerSectionH < floor) {
+      page = pdf.addPage([PAGE_W, PAGE_H]);
+      pageHasTableContent = false;
       y = PAGE_H - MARGIN;
     }
   };
@@ -326,29 +398,6 @@ export async function buildQuotePdfBuffer(options: {
     }
   };
 
-  const drawTableHeader = () => {
-    page.drawRectangle({
-      x: MARGIN,
-      y: y - HEADER_H + 2,
-      width: CONTENT_W,
-      height: HEADER_H,
-      color: headerBg,
-    });
-    const hy = y - 12;
-    // Misma lógica que el PDF de referencia (0044): offsets fijos, no centrado forzado.
-    drawLeft("It.", MARGIN + 6, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    drawLeft("DENOMINACION", xName + 6, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    drawLeft("UNIDADES", xUnit + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    if (detailed) {
-      drawLeft("CANT.", xQty + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-      drawRightIn("P/U", xPu, COL_PU, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-      drawRightIn("TOTAL", xTotal, COL_TOTAL, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    } else {
-      drawLeft("CANTIDAD", xQty + 8, hy, SIZE_HEADER, true, rgb(1, 1, 1));
-    }
-    y -= HEADER_H;
-  };
-
   if (logo) {
     const logoW = 150;
     const logoH = (logo.height / logo.width) * logoW;
@@ -381,6 +430,10 @@ export async function buildQuotePdfBuffer(options: {
   }
 
   const info = [
+    [
+      "Cotizacion:",
+      quote.quoteCode ? `#${quote.quoteCode}` : "-",
+    ],
     ["Cliente:", clientFullName(client)],
     ["Direccion:", client.address ?? "-"],
     ["Telefono:", client.phone ?? "-"],
@@ -398,7 +451,7 @@ export async function buildQuotePdfBuffer(options: {
       x: MARGIN + 68,
       y,
       size: 10,
-      font,
+      font: label === "Cotizacion:" ? fontBold : font,
       color: ink,
     });
     y -= 14;
@@ -406,19 +459,34 @@ export async function buildQuotePdfBuffer(options: {
 
   y -= 10;
   {
-    const title = clipText(fontBold, quote.title, 13, CONTENT_W);
-    const titleW = fontBold.widthOfTextAtSize(title, 13);
-    page.drawText(title, {
-      x: MARGIN + (CONTENT_W - titleW) / 2,
-      y,
-      size: 13,
-      font: fontBold,
-      color: ink,
-    });
-    y -= 18;
+    const autoTitle = quote.quoteCode
+      ? `Cotizacion #${quote.quoteCode}`
+      : null;
+    const trimmed = quote.title.trim();
+    const isGeneric =
+      !trimmed ||
+      trimmed === "Presupuesto de costos" ||
+      trimmed === "Presupuesto" ||
+      (autoTitle != null &&
+        (trimmed === autoTitle ||
+          trimmed === `Cotización #${quote.quoteCode}` ||
+          trimmed === `#${quote.quoteCode}`));
+    if (!isGeneric) {
+      const title = clipText(fontBold, trimmed, 13, CONTENT_W);
+      const titleW = fontBold.widthOfTextAtSize(title, 13);
+      page.drawText(title, {
+        x: MARGIN + (CONTENT_W - titleW) / 2,
+        y,
+        size: 13,
+        font: fontBold,
+        color: ink,
+      });
+      y -= 18;
+    }
   }
 
   drawTableHeader();
+  pageHasTableContent = true;
 
   let item = 1;
   const renderGroups = detailed
@@ -447,8 +515,13 @@ export async function buildQuotePdfBuffer(options: {
         categorySubtotal: null as number | null,
       }));
 
+  let tableRemainingH = renderGroups.reduce(
+    (sum, g) => sum + CAT_H + g.lines.length * ROW_STEP,
+    0,
+  );
+
   for (const group of renderGroups) {
-    ensureSpace(CAT_H + ROW_STEP + 4);
+    ensureSpace(CAT_H, tableRemainingH);
     const catBottom = y - CAT_H;
     page.drawRectangle({
       x: MARGIN,
@@ -481,9 +554,11 @@ export async function buildQuotePdfBuffer(options: {
       );
     }
     y = catBottom;
+    pageHasTableContent = true;
+    tableRemainingH -= CAT_H;
 
     for (const quoteLine of group.lines) {
-      ensureSpace(ROW_STEP + 2);
+      ensureSpace(ROW_STEP, tableRemainingH);
       const rowBottom = y - ROW_STEP;
       // Separador en el borde inferior de la fila.
       page.drawLine({
@@ -546,17 +621,14 @@ export async function buildQuotePdfBuffer(options: {
         );
       }
       y = rowBottom;
+      pageHasTableContent = true;
+      tableRemainingH -= ROW_STEP;
       item += 1;
     }
   }
 
+  beginTotals();
   y -= 10;
-  const obsLines = showObservations
-    ? wrapPdfText(font, observations, 8, CONTENT_W)
-    : [];
-  const obsBlockH = showObservations ? 14 + obsLines.length * 11 : 0;
-  const endMatterH = 58 + obsBlockH + bannerH + footerReserve + 20;
-  ensureEndMatterSpace(endMatterH);
 
   const totalsX = MARGIN + CONTENT_W - 220;
   const totalsW = 220;
@@ -597,7 +669,15 @@ export async function buildQuotePdfBuffer(options: {
     `DESCUENTO ${formatPercent(summary.discountPercent)}`,
     formatClp(summary.discountAmount),
   );
-  drawTotalRow("TOTAL NETO", formatClp(summary.totalNeto), true, 18);
+  drawTotalRow(
+    "TOTAL NETO",
+    formatClp(summary.totalNeto),
+    !summary.includeIva,
+    18,
+  );
+  if (summary.includeIva) {
+    drawTotalRow("TOTAL + IVA (19%)", formatClp(summary.totalConIva), true, 18);
+  }
 
   if (showObservations) {
     y -= 10;
@@ -621,8 +701,9 @@ export async function buildQuotePdfBuffer(options: {
     }
   }
 
+  beginBanner();
   y -= 12;
-  // bannerH ya definido arriba; bloque comercial + pie solo al final
+  // Banner comercial justo bajo totales (misma página o la siguiente si no cabe).
   const top = y;
   const bottom = y - bannerH;
   const midY = y - bannerH / 2;

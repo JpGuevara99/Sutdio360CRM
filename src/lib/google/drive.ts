@@ -111,6 +111,34 @@ export async function moveDriveFolder(options: {
   });
 }
 
+export async function trashDriveFile(fileId: string): Promise<void> {
+  const drive = getDriveClient();
+  await drive.files.update({
+    fileId,
+    requestBody: { trashed: true },
+    supportsAllDrives: true,
+  });
+}
+
+/** Saca un archivo o carpeta de la papelera de Drive. */
+export async function untrashDriveFile(fileId: string): Promise<void> {
+  const drive = getDriveClient();
+  await drive.files.update({
+    fileId,
+    requestBody: { trashed: false },
+    supportsAllDrives: true,
+  });
+}
+
+/** Borra definitivamente (sin pasar por la papelera de Drive). */
+export async function deleteDriveFileForever(fileId: string): Promise<void> {
+  const drive = getDriveClient();
+  await drive.files.delete({
+    fileId,
+    supportsAllDrives: true,
+  });
+}
+
 export async function uploadFileToFolder(options: {
   folderId: string;
   fileName: string;

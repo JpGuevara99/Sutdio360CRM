@@ -2,11 +2,15 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 import { createId } from "@/lib/db/serialize";
 import type {
+  AuditAction,
+  AuditLog,
   ChileAddress,
   Client,
   ClientWithProjects,
   CompanySettings,
   FileRef,
+  FollowUpSettings,
+  ProjectClosingOutcome,
   Material,
   MaterialCategory,
   MaterialUnit,
@@ -16,27 +20,41 @@ import type {
   ProjectStatus,
   ProjectWithRelations,
   Quote,
+  QuoteCosts,
   QuoteLine,
   QuoteStatus,
   QuoteWithLines,
   QuoteWithProject,
   StaffUser,
+  TrashedClient,
+  TrashedProject,
   Visit,
   VisitSource,
 } from "@/lib/crm/types";
-import { DEFAULT_PIPELINE_STAGES, sortStages } from "@/lib/crm/pipeline";
+import {
+  CLOSED_STAGE_NAME,
+  DEFAULT_PIPELINE_STAGES,
+  isClosedStageName,
+  sortStages,
+} from "@/lib/crm/pipeline";
+import {
+  DEFAULT_FOLLOW_UP_SETTINGS,
+  sanitizeFollowUpSettings,
+} from "@/lib/crm/follow-ups";
 import {
   DEFAULT_MATERIAL_CATEGORIES,
   sortMaterialCategories,
 } from "@/lib/crm/material-categories";
 import { buildEntityCode } from "@/lib/crm/project-codes";
 import { sanitizeChileAddress } from "@/lib/crm/chile-address";
+import { quoteCostsFromLines } from "@/lib/crm/quote-summary";
 
 type StoreShape = {
   clients: Client[];
   projects: Project[];
   visits: Visit[];
   files: FileRef[];
+  auditLogs: AuditLog[];
   projectNotes: ProjectNote[];
   quotes: Quote[];
   quoteLines: QuoteLine[];
@@ -48,9 +66,26 @@ type StoreShape = {
   leadCodeValue: number;
   calendarSyncToken: string | null;
   companySettings: CompanySettings | null;
+  followUpSettings: FollowUpSettings | null;
 };
 
 const DATA_PATH = path.join(process.cwd(), ".data", "store.json");
+
+function normalizeQuoteCosts(value: unknown): QuoteCosts | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Record<string, unknown>;
+  const labor = Number(data.labor);
+  const logistics = Number(data.logistics);
+  const materials = Number(data.materials);
+  if (
+    !Number.isFinite(labor) ||
+    !Number.isFinite(logistics) ||
+    !Number.isFinite(materials)
+  ) {
+    return null;
+  }
+  return { labor, logistics, materials };
+}
 
 const globalStore = globalThis as unknown as {
   studio360Memory?: StoreShape;
@@ -62,6 +97,7 @@ function emptyStore(): StoreShape {
     projects: [],
     visits: [],
     files: [],
+    auditLogs: [],
     projectNotes: [],
     quotes: [],
     quoteLines: [],
@@ -73,6 +109,7 @@ function emptyStore(): StoreShape {
     leadCodeValue: 0,
     calendarSyncToken: null,
     companySettings: null,
+    followUpSettings: null,
   };
 }
 
@@ -86,6 +123,7 @@ async function load(): Promise<StoreShape> {
       leadCode: normalizeClientCode(c.leadCode || `TMP-${c.id.slice(-6)}`),
       driveFolderId: c.driveFolderId ?? null,
       driveFolderUrl: c.driveFolderUrl ?? null,
+      deletedAt: c.deletedAt ? new Date(c.deletedAt) : null,
       createdAt: new Date(c.createdAt),
       updatedAt: new Date(c.updatedAt),
     }));
@@ -109,12 +147,39 @@ async function load(): Promise<StoreShape> {
     }));
     parsed.projects = parsed.projects.map((p) => {
       const createdAt = new Date(p.createdAt);
+      const followUpCount = Math.max(
+        0,
+        Math.floor(Number(p.followUpCount ?? 0)) || 0,
+      );
+      const nextNumber = Number(p.followUpNextNumber);
       return {
         ...p,
         stageId: p.stageId ?? null,
         boardOrder:
           typeof p.boardOrder === "number" ? p.boardOrder : -createdAt.getTime(),
         notes: p.notes ?? null,
+        followUpCount,
+        followUpStartedAt: p.followUpStartedAt
+          ? new Date(p.followUpStartedAt)
+          : null,
+        followUpLastAt: p.followUpLastAt ? new Date(p.followUpLastAt) : null,
+        followUpNextNumber:
+          Number.isFinite(nextNumber) && nextNumber > 0
+            ? Math.floor(nextNumber)
+            : null,
+        followUpNextAt: p.followUpNextAt ? new Date(p.followUpNextAt) : null,
+        followUpTaskId: p.followUpTaskId ?? null,
+        followUpTaskListId: p.followUpTaskListId ?? null,
+        closedAt: p.closedAt ? new Date(p.closedAt) : null,
+        closingOutcome:
+          p.closingOutcome === "APROBADO" || p.closingOutcome === "RECHAZADO"
+            ? (p.closingOutcome as ProjectClosingOutcome)
+            : null,
+        closedQuoteId: p.closedQuoteId ?? null,
+        closedAmount:
+          p.closedAmount == null ? null : Number(p.closedAmount) || 0,
+        deletedAt: p.deletedAt ? new Date(p.deletedAt) : null,
+        deletedWithClient: Boolean(p.deletedWithClient),
         createdAt,
         updatedAt: new Date(p.updatedAt),
       };
@@ -136,16 +201,28 @@ async function load(): Promise<StoreShape> {
     }));
     parsed.quotes = (parsed.quotes ?? []).map((q) => ({
       ...q,
+      quoteCode:
+        typeof q.quoteCode === "string" && q.quoteCode.trim()
+          ? q.quoteCode.trim()
+          : null,
+      commercialStatus:
+        q.commercialStatus === "SENT" ||
+        q.commercialStatus === "ACCEPTED" ||
+        q.commercialStatus === "REJECTED"
+          ? q.commercialStatus
+          : "NONE",
       mermaPercent: Number(q.mermaPercent ?? 0),
       utilidadPercent: Number(q.utilidadPercent ?? 0),
       extraPercent: Number(q.extraPercent ?? 0),
       discountPercent: Number(q.discountPercent ?? 0),
+      includeIva: Boolean(q.includeIva),
       warrantyMonths: Number(q.warrantyMonths ?? 0),
       installmentCount: Number(q.installmentCount ?? 0),
       installmentInterestFree: Boolean(q.installmentInterestFree),
       observations:
         typeof q.observations === "string" ? q.observations : "",
       showObservations: q.showObservations !== false,
+      costs: normalizeQuoteCosts(q.costs),
       createdAt: new Date(q.createdAt),
       updatedAt: new Date(q.updatedAt),
     }));
@@ -157,6 +234,10 @@ async function load(): Promise<StoreShape> {
     parsed.files = (parsed.files ?? []).map((f) => ({
       ...f,
       createdAt: new Date(f.createdAt),
+    }));
+    parsed.auditLogs = (parsed.auditLogs ?? []).map((a) => ({
+      ...a,
+      createdAt: new Date(a.createdAt),
     }));
     parsed.companySettings = parsed.companySettings
       ? {
@@ -170,6 +251,9 @@ async function load(): Promise<StoreShape> {
               : null,
           updatedAt: new Date(parsed.companySettings.updatedAt),
         }
+      : null;
+    parsed.followUpSettings = parsed.followUpSettings
+      ? sanitizeFollowUpSettings(parsed.followUpSettings)
       : null;
     globalStore.studio360Memory = parsed;
     return parsed;
@@ -224,9 +308,10 @@ export async function upsertClient(input: {
   const store = await load();
   const email = input.email?.trim().toLowerCase() || null;
   const phone = input.phone?.trim() || null;
+  const active = store.clients.filter((c) => !c.deletedAt);
   const existing =
-    (email && store.clients.find((c) => c.email === email)) ||
-    (phone && store.clients.find((c) => c.phone === phone)) ||
+    (email && active.find((c) => c.email === email)) ||
+    (phone && active.find((c) => c.phone === phone)) ||
     null;
 
   if (existing) {
@@ -256,6 +341,7 @@ export async function upsertClient(input: {
     address: input.address ?? null,
     driveFolderId: null,
     driveFolderUrl: null,
+    deletedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -392,9 +478,10 @@ export async function getClientById(id: string): Promise<Client | null> {
 export async function listClients(): Promise<ClientWithProjects[]> {
   const store = await load();
   return store.clients
+    .filter((client) => !client.deletedAt)
     .map((client) => {
       const projects = store.projects
-        .filter((p) => p.clientId === client.id)
+        .filter((p) => p.clientId === client.id && !p.deletedAt)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       return {
         ...client,
@@ -412,9 +499,114 @@ export async function getClientWithProjects(
   if (!client) return null;
   const store = await load();
   const projects = store.projects
-    .filter((p) => p.clientId === id)
+    .filter((p) => p.clientId === id && !p.deletedAt)
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   return { ...client, projects, projectCount: projects.length };
+}
+
+export async function deleteClient(id: string): Promise<void> {
+  const store = await load();
+  const stillHas = store.projects.some(
+    (p) => p.clientId === id && !p.deletedAt,
+  );
+  if (stillHas) {
+    throw new Error("Client still has projects");
+  }
+  store.clients = store.clients.filter((c) => c.id !== id);
+  await save(store);
+}
+
+export async function setProjectTrashed(
+  id: string,
+  input: { deletedAt: Date | null; deletedWithClient?: boolean },
+): Promise<Project> {
+  const store = await load();
+  const project = store.projects.find((p) => p.id === id);
+  if (!project) throw new Error("Project not found");
+  project.deletedAt = input.deletedAt;
+  project.deletedWithClient = input.deletedAt
+    ? Boolean(input.deletedWithClient)
+    : false;
+  project.updatedAt = new Date();
+  await save(store);
+  return project;
+}
+
+export async function setClientTrashed(
+  id: string,
+  deletedAt: Date | null,
+): Promise<Client> {
+  const store = await load();
+  const client = store.clients.find((c) => c.id === id);
+  if (!client) throw new Error("Client not found");
+  client.deletedAt = deletedAt;
+  client.updatedAt = new Date();
+  await save(store);
+  return client;
+}
+
+export async function listProjectsByClientId(
+  clientId: string,
+  options?: { includeDeleted?: boolean },
+): Promise<Project[]> {
+  const store = await load();
+  return store.projects
+    .filter(
+      (p) =>
+        p.clientId === clientId &&
+        (options?.includeDeleted ? true : !p.deletedAt),
+    )
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function listTrashedProjects(): Promise<TrashedProject[]> {
+  const store = await load();
+  return store.projects
+    .filter((p) => Boolean(p.deletedAt))
+    .sort(
+      (a, b) => (b.deletedAt?.getTime() ?? 0) - (a.deletedAt?.getTime() ?? 0),
+    )
+    .map((project) => ({
+      ...project,
+      client: store.clients.find((c) => c.id === project.clientId) ?? null,
+    }));
+}
+
+export async function listTrashedClients(): Promise<TrashedClient[]> {
+  const store = await load();
+  return store.clients
+    .filter((c) => Boolean(c.deletedAt))
+    .sort(
+      (a, b) => (b.deletedAt?.getTime() ?? 0) - (a.deletedAt?.getTime() ?? 0),
+    )
+    .map((client) => ({
+      ...client,
+      projects: store.projects
+        .filter((p) => p.clientId === client.id)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+    }));
+}
+
+export async function hardDeleteProject(id: string): Promise<void> {
+  const store = await load();
+  const quoteIds = store.quotes
+    .filter((q) => q.projectId === id)
+    .map((q) => q.id);
+  store.quoteLines = store.quoteLines.filter(
+    (l) => !quoteIds.includes(l.quoteId),
+  );
+  store.quotes = store.quotes.filter((q) => q.projectId !== id);
+  store.projectNotes = store.projectNotes.filter((n) => n.projectId !== id);
+  store.visits = store.visits.filter((v) => v.projectId !== id);
+  store.files = store.files.filter((f) => f.projectId !== id);
+  store.projects = store.projects.filter((p) => p.id !== id);
+  await save(store);
+}
+
+export async function hardDeleteClient(id: string): Promise<void> {
+  const store = await load();
+  store.clients = store.clients.filter((c) => c.id !== id);
+  await save(store);
 }
 
 export async function createProject(input: {
@@ -444,6 +636,19 @@ export async function createProject(input: {
     driveFolderId: input.driveFolderId ?? null,
     driveFolderUrl: input.driveFolderUrl ?? null,
     driveSyncPending: input.driveSyncPending ?? false,
+    followUpCount: 0,
+    followUpStartedAt: null,
+    followUpLastAt: null,
+    followUpNextNumber: null,
+    followUpNextAt: null,
+    followUpTaskId: null,
+    followUpTaskListId: null,
+    closedAt: null,
+    closingOutcome: null,
+    closedQuoteId: null,
+    closedAmount: null,
+    deletedAt: null,
+    deletedWithClient: false,
     createdAt: now,
     updatedAt: now,
   };
@@ -474,6 +679,7 @@ export async function updateProject(
   data: Partial<
     Pick<
       Project,
+      | "clientId"
       | "status"
       | "stageId"
       | "boardOrder"
@@ -483,6 +689,17 @@ export async function updateProject(
       | "driveFolderUrl"
       | "driveSyncPending"
       | "calendarEventId"
+      | "followUpCount"
+      | "followUpStartedAt"
+      | "followUpLastAt"
+      | "followUpNextNumber"
+      | "followUpNextAt"
+      | "followUpTaskId"
+      | "followUpTaskListId"
+      | "closedAt"
+      | "closingOutcome"
+      | "closedQuoteId"
+      | "closedAmount"
     >
   >,
 ): Promise<Project> {
@@ -586,6 +803,41 @@ export async function getProjectNoteById(
   return store.projectNotes.find((n) => n.id === noteId) ?? null;
 }
 
+/** Referencia registrada en el CRM para un archivo de Drive (o null). */
+export async function getFileRefByDriveFileId(
+  driveFileId: string,
+): Promise<FileRef | null> {
+  const store = await load();
+  return store.files.find((f) => f.driveFileId === driveFileId) ?? null;
+}
+
+export async function createAuditLog(input: {
+  action: AuditAction;
+  actorEmail: string;
+  target?: string | null;
+  detail?: string | null;
+}): Promise<AuditLog> {
+  const store = await load();
+  const entry: AuditLog = {
+    id: createId("audit"),
+    action: input.action,
+    actorEmail: input.actorEmail,
+    target: input.target ?? null,
+    detail: input.detail ?? null,
+    createdAt: new Date(),
+  };
+  store.auditLogs.push(entry);
+  await save(store);
+  return entry;
+}
+
+export async function listAuditLogs(limit = 100): Promise<AuditLog[]> {
+  const store = await load();
+  return [...store.auditLogs]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, limit);
+}
+
 export async function createFileRef(input: {
   projectId: string;
   driveFileId: string;
@@ -635,6 +887,7 @@ export async function listProjects(options?: {
 }): Promise<ProjectWithRelations[]> {
   const store = await load();
   const projects = store.projects
+    .filter((p) => !p.deletedAt)
     .filter((p) => (options?.status ? p.status === options.status : true))
     .sort((a, b) => {
       if (a.boardOrder !== b.boardOrder) return a.boardOrder - b.boardOrder;
@@ -692,12 +945,15 @@ export async function countProjectsByStatus(
   status: ProjectStatus,
 ): Promise<number> {
   const store = await load();
-  return store.projects.filter((p) => p.status === status).length;
+  return store.projects.filter((p) => p.status === status && !p.deletedAt)
+    .length;
 }
 
 export async function listPendingDriveProjects(): Promise<Project[]> {
   const store = await load();
-  return store.projects.filter((p) => p.driveSyncPending).slice(0, 50);
+  return store.projects
+    .filter((p) => p.driveSyncPending && !p.deletedAt)
+    .slice(0, 50);
 }
 
 export async function getCompanySettings(): Promise<CompanySettings> {
@@ -748,6 +1004,26 @@ export async function updateCompanySettings(input: {
   return next;
 }
 
+export async function getFollowUpSettings(): Promise<FollowUpSettings> {
+  const store = await load();
+  return store.followUpSettings ?? DEFAULT_FOLLOW_UP_SETTINGS;
+}
+
+export async function updateFollowUpSettings(input: {
+  count: number;
+  intervalDays: number[];
+}): Promise<FollowUpSettings> {
+  const store = await load();
+  const next = sanitizeFollowUpSettings({
+    count: input.count,
+    intervalDays: input.intervalDays,
+    updatedAt: new Date(),
+  });
+  store.followUpSettings = next;
+  await save(store);
+  return next;
+}
+
 export async function getCalendarSyncToken(): Promise<string | null> {
   const store = await load();
   return store.calendarSyncToken;
@@ -791,6 +1067,17 @@ export async function listPipelineStages(): Promise<PipelineStage[]> {
   const store = await load();
   if (store.stages.length === 0) {
     return ensureDefaultPipelineStages();
+  }
+  if (!store.stages.some((s) => isClosedStageName(s.name))) {
+    const now = new Date();
+    store.stages.push({
+      id: createId("stg"),
+      name: CLOSED_STAGE_NAME,
+      order: store.stages.length,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await save(store);
   }
   const stages = sortStages(store.stages);
   const firstId = stages[0]?.id ?? null;
@@ -857,6 +1144,9 @@ export async function updatePipelineStage(
   const store = await load();
   const stage = store.stages.find((s) => s.id === id);
   if (!stage) throw new Error("Stage not found");
+  if (data.name !== undefined && isClosedStageName(stage.name)) {
+    throw new Error("La etapa Cerrado es fija y no se puede renombrar");
+  }
   if (data.name !== undefined) stage.name = data.name.trim();
   if (data.order !== undefined) stage.order = data.order;
   stage.updatedAt = new Date();
@@ -868,6 +1158,10 @@ export async function deletePipelineStage(id: string): Promise<void> {
   const store = await load();
   if (store.stages.length <= 1) {
     throw new Error("Debe existir al menos una etapa en el pipeline");
+  }
+  const target = store.stages.find((s) => s.id === id);
+  if (target && isClosedStageName(target.name)) {
+    throw new Error("La etapa Cerrado es fija y no se puede eliminar");
   }
   const fallback = store.stages.find((s) => s.id !== id);
   if (!fallback) throw new Error("No hay etapa de destino");
@@ -887,7 +1181,15 @@ export async function reorderPipelineStages(
   orderedIds: string[],
 ): Promise<PipelineStage[]> {
   const store = await load();
-  orderedIds.forEach((id, index) => {
+  // "Cerrado" queda siempre al final, sin importar el orden recibido.
+  const closedIds = store.stages
+    .filter((s) => isClosedStageName(s.name))
+    .map((s) => s.id);
+  const finalOrder = [
+    ...orderedIds.filter((id) => !closedIds.includes(id)),
+    ...closedIds,
+  ];
+  finalOrder.forEach((id, index) => {
     const stage = store.stages.find((s) => s.id === id);
     if (stage) {
       stage.order = index;
@@ -1075,7 +1377,11 @@ export async function listRecentQuotes(
   limit = 50,
 ): Promise<QuoteWithProject[]> {
   const store = await load();
+  const liveProjectIds = new Set(
+    store.projects.filter((p) => !p.deletedAt).map((p) => p.id),
+  );
   const quotes = [...store.quotes]
+    .filter((q) => liveProjectIds.has(q.projectId))
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
     .slice(0, limit);
   const result: QuoteWithProject[] = [];
@@ -1085,6 +1391,28 @@ export async function listRecentQuotes(
     result.push({ ...quote, project, client: project.client });
   }
   return result;
+}
+
+export async function listAllQuotes(): Promise<Quote[]> {
+  const store = await load();
+  return [...store.quotes].sort(
+    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+  );
+}
+
+export async function listAllQuoteLines(): Promise<QuoteLine[]> {
+  const store = await load();
+  return [...store.quoteLines];
+}
+
+/** Líneas de un conjunto acotado de cotizaciones (evita leer la colección). */
+export async function listQuoteLinesByQuoteIds(
+  quoteIds: string[],
+): Promise<QuoteLine[]> {
+  if (quoteIds.length === 0) return [];
+  const store = await load();
+  const wanted = new Set(quoteIds);
+  return store.quoteLines.filter((line) => wanted.has(line.quoteId));
 }
 
 export async function getQuoteById(
@@ -1102,32 +1430,77 @@ export async function getQuoteById(
   return { ...quote, lines };
 }
 
+export async function getQuoteByCode(
+  code: string,
+): Promise<QuoteWithProject | null> {
+  const normalized = code.trim().replace(/^#/, "").toUpperCase();
+  if (!normalized) return null;
+  const store = await load();
+  const quote = store.quotes.find(
+    (q) =>
+      q.quoteCode &&
+      q.quoteCode.trim().replace(/^#/, "").toUpperCase() === normalized,
+  );
+  if (!quote) return null;
+  const project = await getProjectById(quote.projectId);
+  if (!project) return null;
+  return { ...quote, project, client: project.client };
+}
+
 export async function createQuote(input: {
   projectId: string;
   title?: string;
+  quoteCode?: string;
 }): Promise<Quote> {
   const store = await load();
   const now = new Date();
+  const quoteCode = input.quoteCode?.trim() || null;
   const quote: Quote = {
     id: createId("quote"),
     projectId: input.projectId,
-    title: input.title?.trim() || "Presupuesto de costos",
+    quoteCode,
+    title:
+      input.title?.trim() ||
+      (quoteCode ? `Cotización #${quoteCode}` : "Presupuesto de costos"),
     status: "DRAFT",
+    commercialStatus: "NONE",
     mermaPercent: 0,
     utilidadPercent: 0,
     extraPercent: 0,
     discountPercent: 0,
+    includeIva: false,
     warrantyMonths: 0,
     installmentCount: 0,
     installmentInterestFree: false,
     observations: "",
     showObservations: true,
+    costs: { labor: 0, logistics: 0, materials: 0 },
     createdAt: now,
     updatedAt: now,
   };
   store.quotes.push(quote);
   await save(store);
   return quote;
+}
+
+/** Recalcula y guarda los costos de la cotización desde sus líneas. */
+export async function setQuoteCosts(
+  quoteId: string,
+  costs: QuoteCosts,
+): Promise<void> {
+  const store = await load();
+  const quote = store.quotes.find((q) => q.id === quoteId);
+  if (!quote) return;
+  quote.costs = costs;
+  await save(store);
+}
+
+function refreshQuoteCosts(store: StoreShape, quoteId: string) {
+  const quote = store.quotes.find((q) => q.id === quoteId);
+  if (!quote) return;
+  quote.costs = quoteCostsFromLines(
+    store.quoteLines.filter((l) => l.quoteId === quoteId),
+  );
 }
 
 export async function updateQuote(
@@ -1137,10 +1510,12 @@ export async function updateQuote(
       Quote,
       | "title"
       | "status"
+      | "commercialStatus"
       | "mermaPercent"
       | "utilidadPercent"
       | "extraPercent"
       | "discountPercent"
+      | "includeIva"
       | "warrantyMonths"
       | "installmentCount"
       | "installmentInterestFree"
@@ -1154,6 +1529,9 @@ export async function updateQuote(
   if (!quote) throw new Error("Quote not found");
   if (data.title !== undefined) quote.title = data.title.trim();
   if (data.status !== undefined) quote.status = data.status;
+  if (data.commercialStatus !== undefined) {
+    quote.commercialStatus = data.commercialStatus;
+  }
   if (data.mermaPercent !== undefined) quote.mermaPercent = data.mermaPercent;
   if (data.utilidadPercent !== undefined) {
     quote.utilidadPercent = data.utilidadPercent;
@@ -1162,6 +1540,7 @@ export async function updateQuote(
   if (data.discountPercent !== undefined) {
     quote.discountPercent = data.discountPercent;
   }
+  if (data.includeIva !== undefined) quote.includeIva = data.includeIva;
   if (data.warrantyMonths !== undefined) {
     quote.warrantyMonths = data.warrantyMonths;
   }
@@ -1231,6 +1610,7 @@ export async function addQuoteLines(input: {
 
   const quote = store.quotes.find((q) => q.id === input.quoteId);
   if (quote) quote.updatedAt = now;
+  refreshQuoteCosts(store, input.quoteId);
   await save(store);
   return created;
 }
@@ -1247,6 +1627,7 @@ export async function updateQuoteLine(
   line.updatedAt = new Date();
   const quote = store.quotes.find((q) => q.id === line.quoteId);
   if (quote) quote.updatedAt = line.updatedAt;
+  refreshQuoteCosts(store, line.quoteId);
   await save(store);
   return line;
 }
@@ -1258,6 +1639,7 @@ export async function deleteQuoteLine(lineId: string): Promise<void> {
   store.quoteLines = store.quoteLines.filter((l) => l.id !== lineId);
   const quote = store.quotes.find((q) => q.id === line.quoteId);
   if (quote) quote.updatedAt = new Date();
+  refreshQuoteCosts(store, line.quoteId);
   await save(store);
 }
 
@@ -1266,4 +1648,64 @@ export async function getQuoteLineById(
 ): Promise<QuoteLine | null> {
   const store = await load();
   return store.quoteLines.find((l) => l.id === lineId) ?? null;
+}
+
+export async function cloneQuoteToProject(input: {
+  sourceQuoteId: string;
+  targetProjectId: string;
+  quoteCode: string;
+  title?: string;
+}): Promise<QuoteWithLines> {
+  const store = await load();
+  const source = store.quotes.find((q) => q.id === input.sourceQuoteId);
+  if (!source) throw new Error("Quote not found");
+  const sourceLines = store.quoteLines
+    .filter((l) => l.quoteId === source.id)
+    .sort(
+      (a, b) =>
+        a.sortOrder - b.sortOrder || a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+
+  const now = new Date();
+  const quoteCode = input.quoteCode.trim();
+  const quote: Quote = {
+    id: createId("quote"),
+    projectId: input.targetProjectId,
+    quoteCode,
+    title: input.title?.trim() || `Cotización #${quoteCode}`,
+    status: "DRAFT",
+    commercialStatus: "NONE",
+    mermaPercent: source.mermaPercent,
+    utilidadPercent: source.utilidadPercent,
+    extraPercent: source.extraPercent,
+    discountPercent: source.discountPercent,
+    includeIva: source.includeIva,
+    warrantyMonths: source.warrantyMonths,
+    installmentCount: source.installmentCount,
+    installmentInterestFree: source.installmentInterestFree,
+    observations: source.observations,
+    showObservations: source.showObservations,
+    costs: source.costs ?? quoteCostsFromLines(sourceLines),
+    createdAt: now,
+    updatedAt: now,
+  };
+  store.quotes.push(quote);
+
+  const lines: QuoteLine[] = sourceLines.map((line) => ({
+    id: createId("qline"),
+    quoteId: quote.id,
+    materialId: line.materialId,
+    name: line.name,
+    categoryId: line.categoryId,
+    categoryName: line.categoryName,
+    unit: line.unit,
+    unitCost: line.unitCost,
+    quantity: line.quantity,
+    sortOrder: line.sortOrder,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  store.quoteLines.push(...lines);
+  await save(store);
+  return { ...quote, lines };
 }

@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import {
-  onAuthStateChanged,
+  onIdTokenChanged,
   signInWithPopup,
   signOut,
   type User,
@@ -55,11 +55,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const auth = getFirebaseAuth();
-    return onAuthStateChanged(auth, async (next) => {
+    // onIdTokenChanged también avisa cuando Firebase rota el token (cada hora),
+    // así la cookie de sesión del servidor nunca se queda atrás.
+    return onIdTokenChanged(auth, async (next) => {
       setUser(next);
       if (next) {
         try {
-          // Solo refresca cookie de sesión si hace falta (evita writes en cada reload).
           const token = await next.getIdToken(/* forceRefresh */ false);
           await persistSession(token);
         } catch (error) {

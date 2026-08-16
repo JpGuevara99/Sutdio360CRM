@@ -4,7 +4,7 @@ import { MAX_UPLOAD_BYTES, isBlockedUpload } from "@/lib/crm/file-safety";
 import { db } from "@/lib/db";
 import { ensureProjectDriveFolder } from "@/lib/crm/drive-sync";
 import { uploadFileToFolder } from "@/lib/google/drive";
-import { isGoogleConfigured } from "@/lib/google/auth";
+import { formatGoogleAuthError, isGoogleConfigured } from "@/lib/google/auth";
 import type { FileKind } from "@/lib/crm/types";
 
 function kindFromMime(mimeType: string, fileName: string): FileKind {
@@ -59,7 +59,14 @@ export async function POST(
   }
 
   if (!project.driveFolderId) {
-    await ensureProjectDriveFolder(id);
+    try {
+      await ensureProjectDriveFolder(id);
+    } catch (error) {
+      return NextResponse.json(
+        { error: formatGoogleAuthError(error) },
+        { status: 502 },
+      );
+    }
     project = await db.getProjectById(id);
     if (!project?.driveFolderId) {
       return NextResponse.json(

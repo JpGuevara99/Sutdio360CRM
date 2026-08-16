@@ -8,7 +8,7 @@ import {
   moveDriveFolder,
   renameDriveFolder,
 } from "@/lib/google/drive";
-import { isGoogleConfigured } from "@/lib/google/auth";
+import { formatGoogleAuthError, isGoogleConfigured } from "@/lib/google/auth";
 
 function clientFolderName(client: Client): string {
   const name = `${client.firstName} ${client.lastName}`.trim();
@@ -96,17 +96,54 @@ export async function ensureProjectDriveFolder(projectId: string) {
   } catch (error) {
     console.error("Drive sync failed", error);
     await db.updateProject(projectId, { driveSyncPending: true });
-    return db.getProjectById(projectId);
+    throw error;
   }
 }
 
 export async function retryPendingDriveFolders() {
-  const pending = await db.listPendingDriveProjects();
-  const results = [];
-  for (const project of pending) {
-    results.push(await ensureProjectDriveFolder(project.id));
+  const [pending, projects, clients] = await Promise.all([
+    db.listPendingDriveProjects(),
+    db.listProjects(),
+    db.listClients(),
+  ]);
+
+  const lastErrors: string[] = [];
+  let clientsEnsured = 0;
+  for (const client of clients) {
+    if (client.driveFolderId) continue;
+    try {
+      const updated = await ensureClientDriveFolder(client.id);
+      if (updated.driveFolderId) clientsEnsured += 1;
+    } catch (error) {
+      lastErrors.push(formatGoogleAuthError(error));
+    }
   }
-  return results.filter(Boolean);
+
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const project of [...pending, ...projects]) {
+    if (seen.has(project.id)) continue;
+    if (project.driveFolderId && !project.driveSyncPending) continue;
+    seen.add(project.id);
+    ids.push(project.id);
+  }
+
+  const results = [];
+  for (const id of ids) {
+    try {
+      results.push(await ensureProjectDriveFolder(id));
+    } catch (error) {
+      lastErrors.push(formatGoogleAuthError(error));
+      const fallback = await db.getProjectById(id);
+      if (fallback) results.push(fallback);
+    }
+  }
+
+  return {
+    results: results.filter(Boolean),
+    errors: [...new Set(lastErrors)].slice(0, 5),
+    clientsEnsured,
+  };
 }
 
 export type DriveNestResult = {

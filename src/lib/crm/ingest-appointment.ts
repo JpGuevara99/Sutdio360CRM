@@ -68,7 +68,11 @@ async function materializeAppointment(parsed: ParsedAppointment) {
     notes: parsed.rawDescription,
   });
 
-  await ensureProjectDriveFolder(project.id);
+  try {
+    await ensureProjectDriveFolder(project.id);
+  } catch (error) {
+    console.error("materializeAppointment: Drive folder failed", error);
+  }
 
   if (isGoogleConfigured()) {
     try {

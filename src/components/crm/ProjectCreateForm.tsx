@@ -149,11 +149,15 @@ export function ProjectCreateForm({
       const data = (await res.json()) as {
         project?: { id: string };
         error?: string;
+        warning?: string;
       };
       if (!res.ok || !data.project) {
         setError(data.error ?? "No se pudo crear el proyecto");
         setBusy(false);
         return;
+      }
+      if (data.warning) {
+        setError(data.warning);
       }
       if (onCreated) {
         onCreated(data.project.id);

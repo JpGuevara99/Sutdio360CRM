@@ -33,11 +33,15 @@ export function NewClientButton() {
       const data = (await res.json()) as {
         client?: { id: string };
         error?: string;
+        warning?: string;
       };
       if (!res.ok || !data.client) {
         setError(data.error ?? "No se pudo crear el cliente");
         setBusy(false);
         return;
+      }
+      if (data.warning) {
+        setError(data.warning);
       }
       setOpen(false);
       setBusy(false);

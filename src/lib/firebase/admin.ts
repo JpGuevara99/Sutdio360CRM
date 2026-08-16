@@ -6,10 +6,10 @@ import {
 } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
-import { readEnv } from "@/lib/env";
+import { normalizePemPrivateKey, readEnv } from "@/lib/env";
 
 function getPrivateKey(): string | undefined {
-  return readEnv("FIREBASE_PRIVATE_KEY")?.replace(/\\n/g, "\n");
+  return normalizePemPrivateKey(readEnv("FIREBASE_PRIVATE_KEY"));
 }
 
 /** Fuerza repo local (.data/store.json) aunque Admin esté configurado. */

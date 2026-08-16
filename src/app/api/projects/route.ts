@@ -93,7 +93,15 @@ export async function POST(request: Request) {
       notes: data.notes ?? null,
     });
 
-    return NextResponse.json({ project }, { status: 201 });
+    return NextResponse.json(
+      {
+        project,
+        warning: project.driveFolderId
+          ? undefined
+          : "El proyecto se creó, pero no se pudo crear la carpeta de Drive. Pulsa “Reintentar Drive”.",
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("POST /api/projects failed", error);
     return NextResponse.json(

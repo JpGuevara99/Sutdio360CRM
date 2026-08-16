@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { isValidCronSecret } from "@/lib/auth/cron-secret";
 import { syncAppointmentsFromCalendar } from "@/lib/crm/ingest-appointment";
+import { formatGoogleAuthError } from "@/lib/google/auth";
 
 async function authorized(request: Request): Promise<boolean> {
   if (isValidCronSecret(request.headers.get("x-cron-secret"))) return true;
@@ -23,8 +24,9 @@ export async function POST(request: Request) {
     void forceFull;
     return NextResponse.json(result, { status: result.ok ? 200 : 503 });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Calendar sync failed";
-    return NextResponse.json({ error: message, ok: false }, { status: 500 });
+    return NextResponse.json(
+      { error: formatGoogleAuthError(error), ok: false },
+      { status: 500 },
+    );
   }
 }

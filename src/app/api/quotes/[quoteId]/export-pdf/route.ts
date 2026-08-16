@@ -6,7 +6,7 @@ import { ensureProjectDriveFolder } from "@/lib/crm/drive-sync";
 import { buildQuotePdfBuffer } from "@/lib/crm/quote-pdf";
 import { parseQuoteVariant } from "@/lib/crm/quote-priced-lines";
 import { formatEntityCode } from "@/lib/crm/project-codes";
-import { isGoogleConfigured } from "@/lib/google/auth";
+import { formatGoogleAuthError, isGoogleConfigured } from "@/lib/google/auth";
 import { uploadFileToFolder } from "@/lib/google/drive";
 import { formatInTimeZone } from "date-fns-tz";
 
@@ -54,7 +54,14 @@ export async function POST(
   }
 
   if (!project.driveFolderId) {
-    await ensureProjectDriveFolder(project.id);
+    try {
+      await ensureProjectDriveFolder(project.id);
+    } catch (error) {
+      return NextResponse.json(
+        { error: formatGoogleAuthError(error) },
+        { status: 502 },
+      );
+    }
     project = await db.getProjectById(project.id);
     if (!project?.driveFolderId) {
       return NextResponse.json(

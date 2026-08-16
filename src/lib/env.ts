@@ -19,6 +19,60 @@ export function readEnv(name: string): string | undefined {
   return stripQuotes(process.env[name]);
 }
 
+/**
+ * Arregla claves PEM pegadas en Vercel/.env: comillas extra, `\n` literal,
+ * JSON completo de cuenta de servicio, o saltos de línea de Windows.
+ */
+export function normalizePemPrivateKey(
+  raw: string | undefined,
+): string | undefined {
+  if (!raw) return undefined;
+  let key = raw.trim().replace(/^\uFEFF/, "");
+
+  for (let i = 0; i < 4; i += 1) {
+    const unquoted = stripQuotes(key);
+    if (!unquoted || unquoted === key) break;
+    key = unquoted;
+  }
+
+  if (key.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(key) as { private_key?: unknown };
+      if (typeof parsed.private_key === "string") {
+        key = parsed.private_key.trim();
+      }
+    } catch {
+      // Seguir con el texto original
+    }
+  }
+
+  for (let i = 0; i < 3; i += 1) {
+    const next = key.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\r/g, "\n");
+    if (next === key) break;
+    key = next;
+  }
+  key = key.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+
+  const begin = key.match(/-----BEGIN [A-Z ]*PRIVATE KEY-----/);
+  const end = key.match(/-----END [A-Z ]*PRIVATE KEY-----/);
+  if (begin && end) {
+    const startIdx = key.indexOf(begin[0]);
+    const endIdx = key.lastIndexOf(end[0]) + end[0].length;
+    key = key.slice(startIdx, endIdx);
+  }
+
+  const lines = key
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length > 0) {
+    key = lines.join("\n");
+  }
+
+  if (!key.endsWith("\n")) key += "\n";
+  return key;
+}
+
 export function getAllowedEmailDomains(): string[] {
   const raw = readEnv("ALLOWED_EMAIL_DOMAINS") ?? "";
   return raw

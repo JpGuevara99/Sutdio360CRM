@@ -88,7 +88,11 @@ export async function createProjectForClient(
     });
   }
 
-  await ensureProjectDriveFolder(project.id);
+  try {
+    await ensureProjectDriveFolder(project.id);
+  } catch (error) {
+    console.error("createProjectForClient: Drive folder failed", error);
+  }
 
   const full = await db.getProjectById(project.id);
   if (!full) {

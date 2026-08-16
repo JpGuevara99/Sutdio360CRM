@@ -39,9 +39,23 @@ export function SyncButtons() {
         const scanned = Number(data.scanned ?? 0);
         const skipped = Number(data.skipped ?? 0);
         const label = silent ? "Auto" : "Calendar";
-        setMessage(
-          `${label}: ${created} nuevos · ${scanned} leídos · ${skipped} omitidos · ${now.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`,
-        );
+        let message = `${label}: ${created} nuevos · ${scanned} leídos · ${skipped} omitidos · ${now.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`;
+
+        if (!silent) {
+          const driveRes = await fetch("/api/sync/drive/retry", {
+            method: "POST",
+          });
+          const driveData = (await driveRes.json()) as Record<string, unknown>;
+          if (!driveRes.ok && driveData.error) {
+            message += ` · Drive: ${String(driveData.error)}`;
+          } else {
+            const retried = Number(driveData.retried ?? 0);
+            const clients = Number(driveData.clientsEnsured ?? 0);
+            message += ` · Drive: ${clients} clientes · ${retried} proyectos`;
+          }
+        }
+
+        setMessage(message);
 
         if (created > 0 || !silent) {
           router.refresh();
@@ -78,9 +92,13 @@ export function SyncButtons() {
       if (!res.ok) {
         setMessage(String(data.error ?? "Error en Drive"));
       } else {
-        setMessage(`Drive: reintentos ${String(data.retried ?? 0)}`);
-        router.refresh();
+        setMessage(
+          `Drive: ${String(data.clientsEnsured ?? 0)} clientes · ${String(data.retried ?? 0)} proyectos${
+            data.error ? ` · ${String(data.error)}` : ""
+          }`,
+        );
       }
+      router.refresh();
     } catch {
       setMessage("No se pudo reintentar Drive");
     } finally {

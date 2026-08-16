@@ -47,7 +47,11 @@ export async function createManualLead(input: ManualLeadInput) {
     notes: input.notes ?? null,
   });
 
-  await ensureProjectDriveFolder(project.id);
+  try {
+    await ensureProjectDriveFolder(project.id);
+  } catch (error) {
+    console.error("createManualLead: Drive folder failed", error);
+  }
 
   const full = await db.getProjectById(project.id);
   if (!full) {

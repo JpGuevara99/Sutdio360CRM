@@ -53,7 +53,15 @@ export async function POST(request: Request) {
       phone: data.phone || null,
       address: data.address || null,
     });
-    return NextResponse.json({ client }, { status: 201 });
+    return NextResponse.json(
+      {
+        client,
+        warning: client.driveFolderId
+          ? undefined
+          : "El cliente se creó, pero no se pudo crear la carpeta de Drive. Pulsa “Reintentar Drive”.",
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("POST /api/clients failed", error);
     return NextResponse.json(

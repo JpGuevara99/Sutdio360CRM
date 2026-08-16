@@ -3,14 +3,9 @@ import type { NextConfig } from "next";
 const isDev = process.env.NODE_ENV !== "production";
 
 /** Dominio de Firebase Auth (popup de Google) para permitirlo en la CSP. */
-const firebaseAuthDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-  ? `https://${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}`
-  : "https://*.firebaseapp.com";
-
-/** Sede real de los archivos de login de Firebase (`/__/auth/...`). */
-const firebaseHostingOrigin = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
+const firebaseAuthDomain = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
   ? `https://${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`
-  : "https://studio360-crm.firebaseapp.com";
+  : "https://*.firebaseapp.com";
 
 /**
  * Content-Security-Policy: limita de dónde puede cargar el navegador. Si algún
@@ -76,21 +71,7 @@ const nextConfig: NextConfig = {
     "192.168.0.101",
   ],
   async headers() {
-    return [
-      // El helper de Google vive en /__/auth; no le apliques la CSP de la app.
-      {
-        source: "/((?!__/auth/).*)",
-        headers: securityHeaders,
-      },
-    ];
-  },
-  async rewrites() {
-    return [
-      {
-        source: "/__/auth/:path*",
-        destination: `${firebaseHostingOrigin}/__/auth/:path*`,
-      },
-    ];
+    return [{ source: "/:path*", headers: securityHeaders }];
   },
 };
 

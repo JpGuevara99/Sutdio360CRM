@@ -6,6 +6,8 @@ import {
   MATERIAL_UNIT_LABELS,
   MATERIAL_UNITS,
   formatClp,
+  formatDecimalInput,
+  parseDecimalNumber,
 } from "@/lib/crm/labels";
 import { escapeCsv, unitLabel } from "@/lib/crm/materials-csv";
 import type { Material, MaterialCategory, MaterialUnit } from "@/lib/crm/types";
@@ -238,7 +240,7 @@ export function MaterialsManager({
       name: material.name,
       categoryId: material.categoryId ?? categories[0]?.id ?? "",
       unit: material.unit,
-      costPrice: String(material.costPrice),
+      costPrice: formatDecimalInput(material.costPrice, 2),
     });
     setModalError(null);
   }
@@ -252,7 +254,7 @@ export function MaterialsManager({
     form: FormState,
     id: string | null,
   ): Promise<boolean> {
-    const costPrice = Number(form.costPrice.replace(",", "."));
+    const costPrice = parseDecimalNumber(form.costPrice, 2);
     if (!form.name.trim()) {
       setModalError("Ingresa el nombre del material");
       return false;
@@ -261,7 +263,7 @@ export function MaterialsManager({
       setModalError("Selecciona una categoría");
       return false;
     }
-    if (!Number.isFinite(costPrice) || costPrice < 0) {
+    if (costPrice == null || costPrice < 0) {
       setModalError("Ingresa un precio de costo válido");
       return false;
     }

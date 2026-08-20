@@ -40,16 +40,69 @@ export function clientFullName(client: {
   return `${client.firstName} ${client.lastName}`.trim();
 }
 
+/** Redondea a 2 decimales para montos. */
+export function roundMoney(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/** Redondea cantidades (m², ml, etc.) a 4 decimales. */
+export function roundQty(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
+/**
+ * Lee un número en formato chileno o anglosajón: `12,5`, `12.5`, `15.000,50`.
+ * Devuelve `null` si el texto aún está a medias (p. ej. `12,`).
+ */
+export function parseDecimalNumber(
+  raw: string,
+  decimals: 2 | 4 = 2,
+): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  let normalized = trimmed.replace(/\$/g, "").replace(/\s/g, "");
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = normalized.replace(",", ".");
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(normalized)) {
+    normalized = normalized.replace(/\./g, "");
+  }
+  if (/^\d+\.$/.test(normalized)) return null;
+  const value = Number(normalized);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return decimals === 4 ? roundQty(value) : roundMoney(value);
+}
+
+/** Campo editable sin separador de miles: `15000,5`. */
+export function formatDecimalInput(
+  value: number,
+  decimals: 2 | 4 = 2,
+): string {
+  if (!Number.isFinite(value)) return "";
+  return value.toLocaleString("es-CL", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+    useGrouping: false,
+  });
+}
+
 export function formatClp(amount: number): string {
   return new Intl.NumberFormat("es-CL", {
     style: "currency",
     currency: "CLP",
-    maximumFractionDigits: 0,
-  }).format(amount);
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(roundMoney(amount));
 }
 
 export function formatQty(amount: number): string {
-  return amount.toLocaleString("es-CL", {
-    maximumFractionDigits: 2,
+  return roundQty(amount).toLocaleString("es-CL", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
   });
 }

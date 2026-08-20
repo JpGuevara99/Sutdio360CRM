@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatClp } from "@/lib/crm/labels";
+import { formatClp, parseDecimalNumber } from "@/lib/crm/labels";
 import { formatEntityCode } from "@/lib/crm/project-codes";
 import { formatQuoteCodeLabel } from "@/lib/crm/quote-codes";
 import {
@@ -113,8 +113,10 @@ export function ProjectClosePanel({
 
   async function submit() {
     if (busy) return;
-    const parsedAmount = amount.trim() ? Number(amount.replace(/\./g, "")) : null;
-    if (parsedAmount != null && !Number.isFinite(parsedAmount)) {
+    const parsedAmount = amount.trim()
+      ? parseDecimalNumber(amount, 2)
+      : null;
+    if (amount.trim() && parsedAmount == null) {
       setError("El monto no es válido");
       return;
     }
@@ -286,13 +288,13 @@ export function ProjectClosePanel({
                 Monto confirmado
               </span>
               <input
-                inputMode="numeric"
+                inputMode="decimal"
                 value={amount}
                 onChange={(e) => {
                   setAmountTouched(true);
-                  setAmount(e.target.value.replace(/[^\d]/g, ""));
+                  setAmount(e.target.value);
                 }}
-                placeholder="0"
+                placeholder="0,00"
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm tabular-nums text-foreground outline-none focus:border-primary"
               />
             </label>

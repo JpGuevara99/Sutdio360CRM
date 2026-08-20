@@ -1617,13 +1617,15 @@ export async function addQuoteLines(input: {
 
 export async function updateQuoteLine(
   lineId: string,
-  data: Partial<Pick<QuoteLine, "quantity" | "sortOrder">>,
+  data: Partial<Pick<QuoteLine, "quantity" | "sortOrder" | "unitCost" | "unit">>,
 ): Promise<QuoteLine> {
   const store = await load();
   const line = store.quoteLines.find((l) => l.id === lineId);
   if (!line) throw new Error("Quote line not found");
   if (data.quantity !== undefined) line.quantity = data.quantity;
   if (data.sortOrder !== undefined) line.sortOrder = data.sortOrder;
+  if (data.unitCost !== undefined) line.unitCost = data.unitCost;
+  if (data.unit !== undefined) line.unit = data.unit;
   line.updatedAt = new Date();
   const quote = store.quotes.find((q) => q.id === line.quoteId);
   if (quote) quote.updatedAt = line.updatedAt;

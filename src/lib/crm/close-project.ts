@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { cancelPendingFollowUpTask } from "@/lib/crm/follow-up-engine";
+import { roundMoney } from "@/lib/crm/labels";
 import { isClosedStageName } from "@/lib/crm/pipeline";
 import type {
   ProjectClosingOutcome,
@@ -45,7 +46,7 @@ export async function closeProject(
   const amount =
     input.amount == null || !Number.isFinite(input.amount)
       ? null
-      : Math.max(0, Math.round(input.amount));
+      : Math.max(0, roundMoney(input.amount));
 
   await db.updateProject(project.id, {
     status: input.outcome,

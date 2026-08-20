@@ -2003,7 +2003,7 @@ export async function addQuoteLines(input: {
 
 export async function updateQuoteLine(
   lineId: string,
-  data: Partial<Pick<QuoteLine, "quantity" | "sortOrder">>,
+  data: Partial<Pick<QuoteLine, "quantity" | "sortOrder" | "unitCost" | "unit">>,
 ): Promise<QuoteLine> {
   const ref = getAdminDb().collection("quoteLines").doc(lineId);
   const existing = await ref.get();
@@ -2013,6 +2013,8 @@ export async function updateQuoteLine(
     stripUndefined({
       quantity: data.quantity,
       sortOrder: data.sortOrder,
+      unitCost: data.unitCost,
+      unit: data.unit,
       updatedAt: now,
     }),
   );

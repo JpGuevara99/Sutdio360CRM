@@ -1,6 +1,7 @@
 import type { QuoteCosts, QuoteLine } from "@/lib/crm/types";
 import { QUOTE_IVA_RATE } from "@/lib/crm/types";
 import { groupQuoteLinesByCategory } from "@/lib/crm/quote-groups";
+import { roundMoney } from "@/lib/crm/labels";
 
 export const LABOR_CATEGORY = "Mano de Obra";
 export const LOGISTICS_CATEGORY = "Logística";
@@ -61,7 +62,7 @@ function clampPercent(value: number, max = 999) {
 }
 
 function roundClp(value: number) {
-  return Math.round(value);
+  return roundMoney(value);
 }
 
 export function percentsFromQuote(quote: {
@@ -100,7 +101,7 @@ export function quoteCostsFromLines(lines: QuoteLine[]): QuoteCosts {
     else materials += group.subtotal;
   }
 
-  return { labor, logistics, materials };
+  return { labor: roundMoney(labor), logistics: roundMoney(logistics), materials: roundMoney(materials) };
 }
 
 export type QuoteTotals = {
@@ -163,11 +164,15 @@ export function buildQuoteSummary(
     }
     materialGroups.push({
       categoryName: group.categoryName,
-      subtotal: group.subtotal,
+      subtotal: roundMoney(group.subtotal),
     });
   }
 
-  const materials = materialGroups.reduce((sum, g) => sum + g.subtotal, 0);
+  labor = roundMoney(labor);
+  logistics = roundMoney(logistics);
+  const materials = roundMoney(
+    materialGroups.reduce((sum, g) => sum + g.subtotal, 0),
+  );
   const mermaPercent = clampPercent(percents.mermaPercent);
   const utilidadPercent = clampPercent(percents.utilidadPercent);
   const extraPercent = clampPercent(percents.extraPercent);
@@ -206,4 +211,44 @@ export function buildQuoteSummary(
     totalConIva,
     total: totalConIva,
   };
+}
+
+/** Objetivo de redondeo: peso entero más cercano, sin superar el subtotal neto. */
+export function roundedTotalNetoTarget(
+  totalNeto: number,
+  subtotalNeto: number,
+): number {
+  const target = Math.round(totalNeto);
+  return Math.min(Math.max(0, target), subtotalNeto);
+}
+
+/**
+ * Descuento (%) que acerca el total neto al objetivo. Solo baja el total (descuento ≥ 0).
+ */
+export function discountPercentForTargetTotalNeto(
+  lines: QuoteLine[],
+  percents: QuotePercents & { includeIva?: boolean },
+  targetTotalNeto: number,
+): number | null {
+  const base = buildQuoteSummary(lines, { ...percents, discountPercent: 0 });
+  if (base.subtotalNeto <= 0) return null;
+
+  const target = Math.min(
+    Math.max(0, targetTotalNeto),
+    base.subtotalNeto,
+  );
+
+  let bestPercent = 0;
+  let bestDiff = Infinity;
+  for (let d = 0; d <= 100; d += 0.01) {
+    const trial = buildQuoteSummary(lines, { ...percents, discountPercent: d });
+    const diff = Math.abs(trial.totalNeto - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestPercent = d;
+    }
+    if (diff < 0.005) break;
+  }
+
+  return Math.round(bestPercent * 100) / 100;
 }

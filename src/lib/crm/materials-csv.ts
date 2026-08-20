@@ -1,5 +1,5 @@
 import type { MaterialUnit } from "@/lib/crm/types";
-import { MATERIAL_UNIT_LABELS, MATERIAL_UNITS } from "@/lib/crm/labels";
+import { MATERIAL_UNIT_LABELS, MATERIAL_UNITS, parseDecimalNumber } from "@/lib/crm/labels";
 
 export function escapeCsv(value: string): string {
   if (/[",\n\r]/.test(value)) {
@@ -92,14 +92,6 @@ export function unitLabel(unit: MaterialUnit): string {
 }
 
 export function parseCostPrice(raw: string): number | null {
-  const cleaned = raw
-    .replace(/\$/g, "")
-    .replace(/\./g, "")
-    .replace(/\s/g, "")
-    .replace(",", ".")
-    .trim();
-  if (!cleaned) return null;
-  const value = Number(cleaned);
-  if (!Number.isFinite(value) || value < 0) return null;
-  return Math.round(value);
+  if (!raw.trim()) return null;
+  return parseDecimalNumber(raw, 2);
 }

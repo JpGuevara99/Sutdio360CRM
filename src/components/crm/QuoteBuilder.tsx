@@ -4,17 +4,26 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatInTimeZone } from "date-fns-tz";
 import { MaterialPickerModal } from "@/components/crm/MaterialPickerModal";
-import { buildQuoteSummary } from "@/lib/crm/quote-summary";
+import {
+  buildQuoteSummary,
+  discountPercentForTargetTotalNeto,
+  isLaborCategory,
+  roundedTotalNetoTarget,
+} from "@/lib/crm/quote-summary";
 import {
   MATERIAL_UNIT_LABELS,
+  MATERIAL_UNITS,
   clientFullName,
   formatClp,
+  formatDecimalInput,
+  parseDecimalNumber,
 } from "@/lib/crm/labels";
 import { formatEntityCode } from "@/lib/crm/project-codes";
 import type {
   Client,
   Material,
   MaterialCategory,
+  MaterialUnit,
   Project,
   QuoteCommercialStatus,
   QuoteLine,
@@ -35,6 +44,14 @@ function shortUnit(unit: QuoteLine["unit"]): string {
 
 function qtyMap(lines: QuoteLine[]): Map<string, number> {
   return new Map(lines.map((l) => [l.id, l.quantity]));
+}
+
+function costMap(lines: QuoteLine[]): Map<string, number> {
+  return new Map(lines.map((l) => [l.id, l.unitCost]));
+}
+
+function unitMap(lines: QuoteLine[]): Map<string, MaterialUnit> {
+  return new Map(lines.map((l) => [l.id, l.unit]));
 }
 
 export function QuoteBuilder({
@@ -63,6 +80,14 @@ export function QuoteBuilder({
   const [persistedQty, setPersistedQty] = useState(() =>
     qtyMap(initialQuote.lines),
   );
+  const [persistedCost, setPersistedCost] = useState(() =>
+    costMap(initialQuote.lines),
+  );
+  const [persistedUnit, setPersistedUnit] = useState(() =>
+    unitMap(initialQuote.lines),
+  );
+  const [costDrafts, setCostDrafts] = useState<Record<string, string>>({});
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
   const [leaveHref, setLeaveHref] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -208,6 +233,38 @@ export function QuoteBuilder({
     ],
   );
 
+  const totalNetoRounded = useMemo(
+    () => roundedTotalNetoTarget(summary.totalNeto, summary.subtotalNeto),
+    [summary.totalNeto, summary.subtotalNeto],
+  );
+
+  const canRoundTotalNeto =
+    quote.lines.length > 0 &&
+    summary.subtotalNeto > 0 &&
+    Math.abs(summary.totalNeto - totalNetoRounded) >= 0.005;
+
+  async function roundTotalNeto() {
+    if (!canRoundTotalNeto) return;
+    const nextDiscount = discountPercentForTargetTotalNeto(
+      quote.lines,
+      {
+        mermaPercent,
+        utilidadPercent,
+        extraPercent,
+        discountPercent: 0,
+        includeIva,
+      },
+      totalNetoRounded,
+    );
+    if (nextDiscount == null) return;
+    setDraftSavedAt(null);
+    setDiscountPercent(nextDiscount);
+    const ok = await saveQuoteMeta({ discountPercent: nextDiscount });
+    if (!ok) {
+      setDiscountPercent(persistedMeta.discountPercent);
+    }
+  }
+
   function requestLeave(href: string) {
     if (!dirtyRef.current || allowLeaveRef.current) {
       navigateTo(href);
@@ -315,33 +372,57 @@ export function QuoteBuilder({
     return true;
   }
 
-  async function updateQuantity(
+  async function patchLine(
     lineId: string,
-    quantity: number,
+    patch: {
+      quantity?: number;
+      unitCost?: number;
+      unit?: MaterialUnit;
+    },
   ): Promise<boolean> {
-    if (persistedQty.get(lineId) === quantity) return true;
+    const current = quote.lines.find((l) => l.id === lineId);
+    if (!current) return false;
+    const nextQuantity = patch.quantity ?? current.quantity;
+    const nextCost = patch.unitCost ?? current.unitCost;
+    const nextUnit = patch.unit ?? current.unit;
+    if (
+      persistedQty.get(lineId) === nextQuantity &&
+      persistedCost.get(lineId) === nextCost &&
+      persistedUnit.get(lineId) === nextUnit
+    ) {
+      return true;
+    }
     setBusyLineId(lineId);
     setError(null);
     const res = await fetch(`/api/quotes/${quote.id}/lines/${lineId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ quantity }),
+      body: JSON.stringify(patch),
     });
     setBusyLineId(null);
     if (!res.ok) {
-      setError("No se pudo actualizar la cantidad");
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(data.error ?? "No se pudo actualizar la línea");
       return false;
     }
     const data = (await res.json()) as { line: QuoteLine };
     setQuote((q) => ({
       ...q,
-      lines: q.lines.map((l) =>
-        l.id === lineId ? { ...l, quantity: data.line.quantity } : l,
-      ),
+      lines: q.lines.map((l) => (l.id === lineId ? { ...l, ...data.line } : l)),
     }));
     setPersistedQty((prev) => {
       const next = new Map(prev);
       next.set(lineId, data.line.quantity);
+      return next;
+    });
+    setPersistedCost((prev) => {
+      const next = new Map(prev);
+      next.set(lineId, data.line.unitCost);
+      return next;
+    });
+    setPersistedUnit((prev) => {
+      const next = new Map(prev);
+      next.set(lineId, data.line.unit);
       return next;
     });
     return true;
@@ -353,7 +434,12 @@ export function QuoteBuilder({
     const metaOk = await saveQuoteMeta();
     if (!metaOk) return false;
     for (const line of quote.lines) {
-      const ok = await updateQuantity(line.id, line.quantity);
+      const ok = await patchLine(line.id, {
+        quantity: line.quantity,
+        ...(isLaborCategory(line.categoryName)
+          ? { unitCost: line.unitCost, unit: line.unit }
+          : {}),
+      });
       if (!ok) return false;
     }
     return true;
@@ -415,6 +501,10 @@ export function QuoteBuilder({
     };
     setQuote(nextQuote);
     setPersistedQty(qtyMap(nextQuote.lines));
+    setPersistedCost(costMap(nextQuote.lines));
+    setPersistedUnit(unitMap(nextQuote.lines));
+    setCostDrafts({});
+    setQtyDrafts({});
     setPersistedTitle(nextQuote.title);
     setTitle(nextQuote.title);
   }
@@ -438,6 +528,26 @@ export function QuoteBuilder({
     setPersistedQty((prev) => {
       const next = new Map(prev);
       next.delete(removedId);
+      return next;
+    });
+    setPersistedCost((prev) => {
+      const next = new Map(prev);
+      next.delete(removedId);
+      return next;
+    });
+    setPersistedUnit((prev) => {
+      const next = new Map(prev);
+      next.delete(removedId);
+      return next;
+    });
+    setCostDrafts((prev) => {
+      const next = { ...prev };
+      delete next[removedId];
+      return next;
+    });
+    setQtyDrafts((prev) => {
+      const next = { ...prev };
+      delete next[removedId];
       return next;
     });
     setDeletingId(null);
@@ -628,6 +738,7 @@ export function QuoteBuilder({
               quote.lines.map((line) => {
                 itemIndex += 1;
                 const sub = line.quantity * line.unitCost;
+                const labor = isLaborCategory(line.categoryName);
                 const qtyClass =
                   line.quantity > 0
                     ? "bg-[#e6f4ea] text-[#137333]"
@@ -642,44 +753,136 @@ export function QuoteBuilder({
                       {line.name}
                     </td>
                     <td className="px-3 py-2 text-muted">
-                      {shortUnit(line.unit)}
+                      {labor ? (
+                        <select
+                          disabled={busyLineId === line.id}
+                          value={line.unit}
+                          onChange={(e) => {
+                            const unit = e.target.value as MaterialUnit;
+                            setDraftSavedAt(null);
+                            setQuote((q) => ({
+                              ...q,
+                              lines: q.lines.map((l) =>
+                                l.id === line.id ? { ...l, unit } : l,
+                              ),
+                            }));
+                            void patchLine(line.id, { unit });
+                          }}
+                          className="rounded border border-border bg-surface px-1 py-1 text-sm outline-none focus:border-primary"
+                        >
+                          {MATERIAL_UNITS.map((unit) => (
+                            <option key={unit} value={unit}>
+                              {shortUnit(unit)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        shortUnit(line.unit)
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <input
-                        type="number"
-                        min={0}
-                        step="any"
+                        type="text"
+                        inputMode="decimal"
                         disabled={busyLineId === line.id}
-                        value={line.quantity}
+                        value={
+                          qtyDrafts[line.id] ??
+                          formatDecimalInput(line.quantity, 4)
+                        }
                         onChange={(e) => {
-                          const value = Number(e.target.value);
+                          const raw = e.target.value;
                           setDraftSavedAt(null);
+                          setQtyDrafts((prev) => ({
+                            ...prev,
+                            [line.id]: raw,
+                          }));
+                          const parsed = parseDecimalNumber(raw, 4);
+                          if (parsed === null) return;
                           setQuote((q) => ({
                             ...q,
                             lines: q.lines.map((l) =>
                               l.id === line.id
-                                ? {
-                                    ...l,
-                                    quantity: Number.isFinite(value)
-                                      ? value
-                                      : 0,
-                                  }
+                                ? { ...l, quantity: parsed }
                                 : l,
                             ),
                           }));
                         }}
                         onBlur={(e) => {
-                          const value = Number(e.target.value);
-                          void updateQuantity(
-                            line.id,
-                            Number.isFinite(value) ? Math.max(0, value) : 0,
-                          );
+                          const parsed =
+                            parseDecimalNumber(e.target.value, 4) ??
+                            line.quantity;
+                          const next = Math.max(0, parsed);
+                          setQtyDrafts((prev) => {
+                            const copy = { ...prev };
+                            delete copy[line.id];
+                            return copy;
+                          });
+                          setQuote((q) => ({
+                            ...q,
+                            lines: q.lines.map((l) =>
+                              l.id === line.id
+                                ? { ...l, quantity: next }
+                                : l,
+                            ),
+                          }));
+                          void patchLine(line.id, { quantity: next });
                         }}
-                        className={`w-20 rounded border border-border px-2 py-1 text-right outline-none focus:border-primary ${qtyClass}`}
+                        className={`w-24 rounded-lg border border-border bg-surface px-2 py-1.5 text-right text-sm tabular-nums outline-none focus:border-primary ${qtyClass}`}
                       />
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {formatClp(line.unitCost)}
+                      {labor ? (
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          disabled={busyLineId === line.id}
+                          value={
+                            costDrafts[line.id] ??
+                            formatDecimalInput(line.unitCost, 2)
+                          }
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setDraftSavedAt(null);
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [line.id]: raw,
+                            }));
+                            const parsed = parseDecimalNumber(raw, 2);
+                            if (parsed === null) return;
+                            setQuote((q) => ({
+                              ...q,
+                              lines: q.lines.map((l) =>
+                                l.id === line.id
+                                  ? { ...l, unitCost: parsed }
+                                  : l,
+                              ),
+                            }));
+                          }}
+                          onBlur={(e) => {
+                            const parsed =
+                              parseDecimalNumber(e.target.value, 2) ??
+                              line.unitCost;
+                            const next = Math.max(0, parsed);
+                            setCostDrafts((prev) => {
+                              const copy = { ...prev };
+                              delete copy[line.id];
+                              return copy;
+                            });
+                            setQuote((q) => ({
+                              ...q,
+                              lines: q.lines.map((l) =>
+                                l.id === line.id
+                                  ? { ...l, unitCost: next }
+                                  : l,
+                              ),
+                            }));
+                            void patchLine(line.id, { unitCost: next });
+                          }}
+                          className="w-28 rounded-lg border border-border bg-surface px-2 py-1.5 text-right text-sm text-foreground tabular-nums outline-none focus:border-primary"
+                        />
+                      ) : (
+                        formatClp(line.unitCost)
+                      )}
                     </td>
                     <td
                       className={`px-3 py-2 text-right tabular-nums font-medium ${
@@ -804,11 +1007,23 @@ export function QuoteBuilder({
               label={`Descuento (${summary.discountPercent.toLocaleString("es-CL")}%)`}
               value={-summary.discountAmount}
             />
-            <div className="flex items-center justify-between gap-3 border-t border-border pt-3 text-base">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 text-base">
               <dt className="font-semibold text-foreground">TOTAL NETO</dt>
-              <dd className="tabular-nums font-semibold text-foreground">
-                {formatClp(summary.totalNeto)}
-              </dd>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {canRoundTotalNeto ? (
+                  <button
+                    type="button"
+                    title={`Ajustar descuento para llegar a ${formatClp(totalNetoRounded)}`}
+                    onClick={() => void roundTotalNeto()}
+                    className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-medium text-muted-strong transition hover:border-primary hover:bg-primary-soft/30 hover:text-foreground"
+                  >
+                    Redondear
+                  </button>
+                ) : null}
+                <dd className="tabular-nums font-semibold text-foreground">
+                  {formatClp(summary.totalNeto)}
+                </dd>
+              </div>
             </div>
             <label className="flex cursor-pointer items-center justify-between gap-3 pt-2 text-sm text-foreground">
               <span>Incluir IVA (19%)</span>

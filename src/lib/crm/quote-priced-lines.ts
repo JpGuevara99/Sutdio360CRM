@@ -1,4 +1,5 @@
 import type { QuoteLine } from "@/lib/crm/types";
+import { roundMoney } from "@/lib/crm/labels";
 import { groupQuoteLinesByCategory } from "@/lib/crm/quote-groups";
 import {
   buildQuoteSummary,
@@ -34,7 +35,7 @@ function clampPercent(value: number, max = 999) {
 }
 
 function roundClp(value: number) {
-  return Math.round(value);
+  return roundMoney(value);
 }
 
 function isMaterialLine(line: QuoteLine) {
@@ -91,7 +92,7 @@ export function buildPricedQuoteLines(
     ...line,
     costTotal,
     lineTotal,
-    unitPrice: line.quantity > 0 ? lineTotal / line.quantity : 0,
+    unitPrice: line.quantity > 0 ? roundMoney(lineTotal / line.quantity) : 0,
   }));
 }
 

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { statusForStage } from "@/lib/crm/pipeline";
 import { db } from "@/lib/db";
 
 const reorderSchema = z.object({
@@ -36,7 +38,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    await db.reorderProjectsInStage(stageId, orderedIds);
+    const nextStatus = statusForStage(stage);
+    await db.reorderProjectsInStage(stageId, orderedIds, nextStatus ?? undefined);
+    revalidatePath("/proyectos");
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("POST /api/projects/reorder failed", error);

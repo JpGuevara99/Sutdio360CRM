@@ -35,6 +35,7 @@ import { isFollowUpStopped } from "@/lib/crm/follow-ups";
 import {
   CLOSED_STAGE_VISIBLE_DAYS,
   isClosedStageName,
+  statusForStage,
 } from "@/lib/crm/pipeline";
 import type {
   FollowUpSettings,
@@ -215,14 +216,18 @@ export function ProjectsPipeline({
 
   async function persistStageOrder(stageId: string, orderedIds: string[]) {
     const previous = projects;
+    const stage = stages.find((s) => s.id === stageId);
+    const nextStatus = stage ? statusForStage(stage) : null;
     setProjects((list) => {
       const orderMap = new Map(orderedIds.map((id, index) => [id, index]));
       return list.map((p) => {
         if (!orderMap.has(p.id)) return p;
+        const stageChanged = p.stageId !== stageId;
         return {
           ...p,
           stageId,
           boardOrder: orderMap.get(p.id)!,
+          ...(nextStatus && stageChanged ? { status: nextStatus } : {}),
         };
       });
     });
@@ -238,7 +243,6 @@ export function ProjectsPipeline({
       setError(data.error ?? "No se pudo reordenar el proyecto");
       return;
     }
-    router.refresh();
   }
 
   function onBoardDragStart(event: DragStartEvent) {
@@ -669,11 +673,12 @@ export function ProjectsPipeline({
         stages={stages}
         followUpSettings={followUpSettings}
         onClose={() => setSelectedProjectId(null)}
-        onStageChanged={(projectId, stageId) => {
+        onStageChanged={(projectId, { stageId, status }) => {
           setProjects((list) =>
-            list.map((p) => (p.id === projectId ? { ...p, stageId } : p)),
+            list.map((p) =>
+              p.id === projectId ? { ...p, stageId, status } : p,
+            ),
           );
-          router.refresh();
         }}
         onFollowUpChanged={(projectId, state) => {
           setProjects((list) =>

@@ -844,16 +844,25 @@ export async function createProject(input: {
 export async function reorderProjectsInStage(
   stageId: string,
   orderedIds: string[],
+  status?: Project["status"],
 ): Promise<void> {
   const db = getAdminDb();
+  const refs = orderedIds.map((id) => db.collection("projects").doc(id));
+  const snaps = await db.getAll(...refs);
   const batch = db.batch();
   const now = new Date();
-  orderedIds.forEach((id, index) => {
-    batch.update(db.collection("projects").doc(id), {
+  snaps.forEach((snap, index) => {
+    if (!snap.exists) return;
+    const currentStageId = (snap.data()?.stageId as string | null) ?? null;
+    const update: Record<string, unknown> = {
       stageId,
       boardOrder: index,
       updatedAt: now,
-    });
+    };
+    if (status && currentStageId !== stageId) {
+      update.status = status;
+    }
+    batch.update(snap.ref, update);
   });
   await batch.commit();
 }

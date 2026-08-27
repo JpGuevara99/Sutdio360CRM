@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { requireApiSession } from "@/lib/auth/api-session";
@@ -90,6 +91,10 @@ export async function PATCH(
     const project = await db.getProjectById(id);
     if (!project) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (body.stageId !== undefined || body.status !== undefined) {
+      revalidatePath("/proyectos");
+      revalidatePath(`/proyectos/${id}`);
     }
     return NextResponse.json({ project });
   } catch (error) {

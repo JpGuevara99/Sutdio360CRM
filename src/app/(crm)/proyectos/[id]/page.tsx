@@ -12,7 +12,7 @@ import { ProjectQuotesSection } from "@/components/crm/ProjectQuotesSection";
 import { ProjectFollowUpPanel } from "@/components/crm/ProjectFollowUpPanel";
 import { ClientEditForm } from "@/components/crm/ClientEditForm";
 import { DeleteEntityAction } from "@/components/crm/DeleteEntityAction";
-import { VISIT_SOURCE_LABELS, formatClp } from "@/lib/crm/labels";
+import { VISIT_SOURCE_LABELS, clientFullName, formatClp } from "@/lib/crm/labels";
 import { formatEntityCode } from "@/lib/crm/project-codes";
 import { formatQuoteCodeLabel } from "@/lib/crm/quote-codes";
 import { requirePageSession } from "@/lib/auth/require-page-session";
@@ -57,7 +57,13 @@ export default async function ProjectDetailPage({
               {project.title ?? "Proyecto sin título"}
             </p>
           </div>
-          <ProjectStatusForm projectId={project.id} status={project.status} />
+          <ProjectStatusForm
+            projectId={project.id}
+            stageId={project.stageId}
+            status={project.status}
+            publicCode={project.publicCode}
+            clientName={clientFullName(project.client)}
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">

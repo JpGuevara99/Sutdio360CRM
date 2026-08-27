@@ -702,7 +702,7 @@ export function MaterialsManager({
                 <th className="px-4 py-2.5 font-medium">Categoría</th>
                 <th className="px-4 py-2.5 font-medium">Unidad</th>
                 <th className="px-4 py-2.5 text-right font-medium">Costo</th>
-                <th className="w-24 px-4 py-2.5 text-right font-medium">
+                <th className="min-w-[9.5rem] px-4 py-2.5 text-right font-medium">
                   Acciones
                 </th>
               </tr>
@@ -732,16 +732,17 @@ export function MaterialsManager({
                       {formatClp(material.costPrice)}
                     </td>
                     <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-end gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
+                      <div className="flex items-center justify-end gap-1.5">
                         <button
                           type="button"
                           disabled={saving}
                           onClick={() => openEdit(material)}
                           title="Editar"
                           aria-label={`Editar ${material.name}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-primary-text hover:bg-primary-soft disabled:opacity-60"
+                          className="inline-flex min-h-10 min-w-10 items-center justify-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium text-primary-text hover:border-primary hover:bg-primary-soft disabled:opacity-60"
                         >
                           <PencilIcon />
+                          <span className="hidden sm:inline">Editar</span>
                         </button>
                         <button
                           type="button"
@@ -749,9 +750,10 @@ export function MaterialsManager({
                           onClick={() => setDeletingId(material.id)}
                           title="Eliminar"
                           aria-label={`Eliminar ${material.name}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-danger hover:bg-danger-soft disabled:opacity-60"
+                          className="inline-flex min-h-10 min-w-10 items-center justify-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium text-danger hover:border-danger hover:bg-danger-soft disabled:opacity-60"
                         >
                           <TrashIcon />
+                          <span className="hidden sm:inline">Eliminar</span>
                         </button>
                       </div>
                     </td>

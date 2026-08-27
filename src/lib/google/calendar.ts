@@ -194,8 +194,7 @@ export function isLikelyAppointmentBooking(
   const summary = event.summary ?? "";
   const description = stripHtml(event.description ?? "");
 
-  if (parsed.phone || parsed.address) return true;
-
+  // Formulario de reserva de Google Appointment Schedule (link de citas).
   if (
     /email address|phone number|first name|last name|direcci[oó]n|tel[eé]fono/i.test(
       description,
@@ -204,29 +203,26 @@ export function isLikelyAppointmentBooking(
     return true;
   }
 
+  // Reserva en español: "Programada por: Nombre, email, teléfono".
+  if (/programada por\s*:/i.test(description)) {
+    return true;
+  }
+
   if (
-    /appointment with|cita con|appointment schedule|booked an appointment|horario de citas|studio\s*360/i.test(
+    /appointment schedule|booked an appointment|horario de citas|cita reservada|appointment with/i.test(
       `${summary}\n${description}`,
     )
   ) {
     return true;
   }
 
-  const guest = event.attendees?.find((a) => !a.organizer && !a.self && a.email);
-  if (guest?.email && (parsed.phone || parsed.address || parsed.email)) {
+  // Re-sincronizar un lead que el CRM ya marcó en Calendar.
+  if (/studio360 crm:/i.test(description)) {
     return true;
   }
 
-  // Google Appointment Schedule often invites the client as attendee
-  // and uses booking form fields in the description.
-  if (
-    guest?.email &&
-    /visita|cotizaci|reserva|booking|schedule/i.test(`${summary}\n${description}`)
-  ) {
-    return true;
-  }
-
-  return Boolean(parsed.email && (parsed.phone || parsed.address));
+  void parsed;
+  return false;
 }
 
 export function parseAppointmentEvent(

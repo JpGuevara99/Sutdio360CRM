@@ -12,7 +12,6 @@ import {
   type FollowUpState,
 } from "@/components/crm/FollowUpControls";
 import { VISIT_SOURCE_LABELS, clientFullName } from "@/lib/crm/labels";
-import { isClosedStageName } from "@/lib/crm/pipeline";
 import { formatEntityCode } from "@/lib/crm/project-codes";
 import type {
   Client,
@@ -66,17 +65,18 @@ export function ProjectDrawer({
   stages: Array<Pick<PipelineStage, "id" | "name" | "order">>;
   followUpSettings: FollowUpSettings;
   onClose: () => void;
-  onStageChanged: (projectId: string, stageId: string) => void;
+  onStageChanged: (
+    projectId: string,
+    update: { stageId: string; status: ProjectStatus },
+  ) => void;
   onFollowUpChanged?: (projectId: string, state: FollowUpState) => void;
 }) {
   const open = Boolean(projectId);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectDetail | null>(null);
-  const [stageId, setStageId] = useState("");
 
   useEffect(() => {
     if (!projectId) {
@@ -178,7 +178,6 @@ export function ProjectDrawer({
       };
 
       setProject(detail);
-      setStageId(detail.stageId ?? stages[0]?.id ?? "");
     })();
 
     return () => {
@@ -194,36 +193,6 @@ export function ProjectDrawer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-
-  async function saveStage(nextStageId: string) {
-    if (!project || nextStageId === project.stageId) return;
-    setStageId(nextStageId);
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/projects/${project.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          stageId: nextStageId,
-          boardOrder: Date.now(),
-        }),
-      });
-      if (!res.ok) {
-        setStageId(project.stageId ?? "");
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(data.error ?? "No se pudo cambiar la fase");
-        return;
-      }
-      setProject((p) => (p ? { ...p, stageId: nextStageId } : p));
-      onStageChanged(project.id, nextStageId);
-    } catch {
-      setStageId(project.stageId ?? "");
-      setError("Error de red al cambiar la fase");
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function onUploadFile(event: React.ChangeEvent<HTMLInputElement>) {
     if (!project) return;
@@ -319,41 +288,24 @@ export function ProjectDrawer({
 
               <ProjectStatusForm
                 projectId={project.id}
+                stageId={project.stageId}
                 status={project.status}
+                publicCode={project.publicCode}
+                clientName={clientFullName(project.client)}
+                stages={stages}
                 compact
-                onChanged={(status) =>
-                  setProject((p) => (p ? { ...p, status } : p))
-                }
+                onChanged={({ stageId: nextStageId, status: nextStatus }) => {
+                  setProject((p) =>
+                    p
+                      ? { ...p, stageId: nextStageId, status: nextStatus }
+                      : p,
+                  );
+                  onStageChanged(project.id, {
+                    stageId: nextStageId,
+                    status: nextStatus,
+                  });
+                }}
               />
-
-              <label className="block text-sm">
-                <span className="mb-1 block font-medium text-muted-strong">
-                  Fase del pipeline
-                </span>
-                <select
-                  value={stageId}
-                  disabled={saving}
-                  onChange={(e) => void saveStage(e.target.value)}
-                  className="w-full rounded-lg border border-border px-3 py-2 outline-none focus:border-primary"
-                >
-                  {stages.map((stage) => {
-                    // El cierre se confirma en el panel del tablero.
-                    const lockedClosed =
-                      isClosedStageName(stage.name) &&
-                      project.stageId !== stage.id;
-                    return (
-                      <option
-                        key={stage.id}
-                        value={stage.id}
-                        disabled={lockedClosed}
-                      >
-                        {stage.name}
-                        {lockedClosed ? " (arrastra la tarjeta)" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
 
               <section className="space-y-2 text-sm">
                 <h3 className="font-medium text-foreground">Seguimientos</h3>

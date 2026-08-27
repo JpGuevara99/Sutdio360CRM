@@ -660,14 +660,19 @@ export async function createProject(input: {
 export async function reorderProjectsInStage(
   stageId: string,
   orderedIds: string[],
+  status?: Project["status"],
 ): Promise<void> {
   const store = await load();
   const now = new Date();
   orderedIds.forEach((id, index) => {
     const project = store.projects.find((p) => p.id === id);
     if (project) {
+      const previousStageId = project.stageId;
       project.stageId = stageId;
       project.boardOrder = index;
+      if (status && previousStageId !== stageId) {
+        project.status = status;
+      }
       project.updatedAt = now;
     }
   });

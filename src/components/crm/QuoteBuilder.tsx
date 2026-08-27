@@ -71,6 +71,7 @@ export function QuoteBuilder({
 }) {
   const router = useRouter();
   const [quote, setQuote] = useState(initialQuote);
+  const [catalogMaterials, setCatalogMaterials] = useState(materials);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busyLineId, setBusyLineId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -1187,11 +1188,24 @@ export function QuoteBuilder({
 
       {pickerOpen ? (
         <MaterialPickerModal
-          materials={materials}
+          materials={catalogMaterials}
           categories={categories}
           excludeIds={excludeIds}
           onClose={() => setPickerOpen(false)}
           onAccept={addMaterials}
+          onMaterialSaved={(material) => {
+            setCatalogMaterials((list) => {
+              const idx = list.findIndex((m) => m.id === material.id);
+              if (idx >= 0) {
+                const next = [...list];
+                next[idx] = material;
+                return next;
+              }
+              return [...list, material].sort((a, b) =>
+                a.name.localeCompare(b.name, "es"),
+              );
+            });
+          }}
         />
       ) : null}
 

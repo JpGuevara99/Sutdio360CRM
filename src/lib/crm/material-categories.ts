@@ -28,3 +28,28 @@ export function sortMaterialCategories(
 ): MaterialCategory[] {
   return [...categories].sort((a, b) => a.order - b.order);
 }
+
+export function normalizeCategoryName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+export const DUPLICATE_CATEGORY_NAME_ERROR =
+  "Ya existe una categoría con ese nombre";
+
+export function isDuplicateCategoryName(
+  name: string,
+  categories: Array<{ id: string; name: string }>,
+  excludeId?: string,
+): boolean {
+  const normalized = normalizeCategoryName(name);
+  if (!normalized) return false;
+  return categories.some(
+    (category) =>
+      category.id !== excludeId &&
+      normalizeCategoryName(category.name) === normalized,
+  );
+}

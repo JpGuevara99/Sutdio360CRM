@@ -29,7 +29,12 @@ export async function PATCH(
   try {
     const category = await db.updateMaterialCategory(id, parsed.data);
     return NextResponse.json({ category });
-  } catch {
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "No se pudo actualizar";
+    if (message.includes("Ya existe")) {
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
     return NextResponse.json(
       { error: "Categoría no encontrada" },
       { status: 404 },

@@ -19,6 +19,7 @@ import {
   formatPercent,
   percentsFromQuote,
 } from "@/lib/crm/quote-summary";
+import { formatEntityCode } from "@/lib/crm/project-codes";
 import {
   buildPricedQuoteLines,
   groupPricedLinesByCategory,
@@ -153,6 +154,7 @@ export async function buildQuotePdfBuffer(options: {
 }): Promise<Buffer> {
   const {
     quote,
+    project,
     client,
     companySettings = null,
     variant = "simple",
@@ -429,7 +431,11 @@ export async function buildQuotePdfBuffer(options: {
     y -= 22;
   }
 
+  const projectLabel = `${formatEntityCode(project.publicCode)}${
+    project.title?.trim() ? ` · ${project.title.trim()}` : ""
+  }`;
   const info = [
+    ["Proyecto:", projectLabel],
     [
       "Cotizacion:",
       quote.quoteCode ? `#${quote.quoteCode}` : "-",

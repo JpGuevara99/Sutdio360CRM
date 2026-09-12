@@ -16,6 +16,8 @@ import type {
   MaterialUnit,
   PipelineStage,
   Project,
+  ProjectExpense,
+  ProjectExpenseCategory,
   ProjectNote,
   ProjectStatus,
   ProjectWithRelations,
@@ -43,6 +45,8 @@ import {
 } from "@/lib/crm/follow-ups";
 import {
   DEFAULT_MATERIAL_CATEGORIES,
+  DUPLICATE_CATEGORY_NAME_ERROR,
+  isDuplicateCategoryName,
   sortMaterialCategories,
 } from "@/lib/crm/material-categories";
 import { buildEntityCode } from "@/lib/crm/project-codes";
@@ -56,6 +60,7 @@ type StoreShape = {
   files: FileRef[];
   auditLogs: AuditLog[];
   projectNotes: ProjectNote[];
+  projectExpenses: ProjectExpense[];
   quotes: Quote[];
   quoteLines: QuoteLine[];
   staff: StaffUser[];
@@ -99,6 +104,7 @@ function emptyStore(): StoreShape {
     files: [],
     auditLogs: [],
     projectNotes: [],
+    projectExpenses: [],
     quotes: [],
     quoteLines: [],
     staff: [],
@@ -198,6 +204,15 @@ async function load(): Promise<StoreShape> {
       ...n,
       createdAt: new Date(n.createdAt),
       updatedAt: new Date(n.updatedAt ?? n.createdAt),
+    }));
+    parsed.projectExpenses = (parsed.projectExpenses ?? []).map((e) => ({
+      ...e,
+      amount: Number(e.amount ?? 0),
+      description: String(e.description ?? ""),
+      category: e.category ?? "OTROS",
+      expenseDate: new Date(e.expenseDate ?? e.createdAt),
+      createdAt: new Date(e.createdAt),
+      updatedAt: new Date(e.updatedAt ?? e.createdAt),
     }));
     parsed.quotes = (parsed.quotes ?? []).map((q) => ({
       ...q,
@@ -597,6 +612,9 @@ export async function hardDeleteProject(id: string): Promise<void> {
   );
   store.quotes = store.quotes.filter((q) => q.projectId !== id);
   store.projectNotes = store.projectNotes.filter((n) => n.projectId !== id);
+  store.projectExpenses = store.projectExpenses.filter(
+    (e) => e.projectId !== id,
+  );
   store.visits = store.visits.filter((v) => v.projectId !== id);
   store.files = store.files.filter((f) => f.projectId !== id);
   store.projects = store.projects.filter((p) => p.id !== id);
@@ -806,6 +824,77 @@ export async function getProjectNoteById(
 ): Promise<ProjectNote | null> {
   const store = await load();
   return store.projectNotes.find((n) => n.id === noteId) ?? null;
+}
+
+export async function listAllProjectExpenses(): Promise<ProjectExpense[]> {
+  const store = await load();
+  return [...store.projectExpenses].sort(
+    (a, b) => b.expenseDate.getTime() - a.expenseDate.getTime(),
+  );
+}
+
+export async function listProjectExpenses(
+  projectId: string,
+): Promise<ProjectExpense[]> {
+  const store = await load();
+  return store.projectExpenses
+    .filter((e) => e.projectId === projectId)
+    .sort((a, b) => b.expenseDate.getTime() - a.expenseDate.getTime());
+}
+
+export async function createProjectExpense(input: {
+  projectId: string;
+  amount: number;
+  description: string;
+  category: ProjectExpenseCategory;
+  expenseDate: Date;
+}): Promise<ProjectExpense> {
+  const store = await load();
+  const now = new Date();
+  const expense: ProjectExpense = {
+    id: createId("exp"),
+    projectId: input.projectId,
+    amount: input.amount,
+    description: input.description.trim(),
+    category: input.category,
+    expenseDate: input.expenseDate,
+    createdAt: now,
+    updatedAt: now,
+  };
+  store.projectExpenses.push(expense);
+  await save(store);
+  return expense;
+}
+
+export async function updateProjectExpense(
+  expenseId: string,
+  data: Partial<
+    Pick<ProjectExpense, "amount" | "description" | "category" | "expenseDate">
+  >,
+): Promise<ProjectExpense> {
+  const store = await load();
+  const expense = store.projectExpenses.find((e) => e.id === expenseId);
+  if (!expense) throw new Error("Expense not found");
+  if (data.amount !== undefined) expense.amount = data.amount;
+  if (data.description !== undefined) expense.description = data.description.trim();
+  if (data.category !== undefined) expense.category = data.category;
+  if (data.expenseDate !== undefined) expense.expenseDate = data.expenseDate;
+  expense.updatedAt = new Date();
+  await save(store);
+  return expense;
+}
+
+export async function deleteProjectExpense(expenseId: string): Promise<void> {
+  const store = await load();
+  store.projectExpenses = store.projectExpenses.filter((e) => e.id !== expenseId);
+  await save(store);
+}
+
+export async function getProjectExpenseById(
+  expenseId: string,
+): Promise<ProjectExpense | null> {
+  const store = await load();
+  return store.projectExpenses.find((e) => e.id === expenseId) ?? null;
 }
 
 /** Referencia registrada en el CRM para un archivo de Drive (o null). */
@@ -1237,6 +1326,9 @@ export async function createMaterialCategory(input: {
 }): Promise<MaterialCategory> {
   const store = await load();
   await listMaterialCategories();
+  if (isDuplicateCategoryName(input.name, store.materialCategories)) {
+    throw new Error(DUPLICATE_CATEGORY_NAME_ERROR);
+  }
   const category: MaterialCategory = {
     id: createId("mcg"),
     name: input.name.trim(),
@@ -1256,7 +1348,12 @@ export async function updateMaterialCategory(
   const store = await load();
   const category = store.materialCategories.find((c) => c.id === id);
   if (!category) throw new Error("Category not found");
-  if (data.name !== undefined) category.name = data.name.trim();
+  if (data.name !== undefined) {
+    if (isDuplicateCategoryName(data.name, store.materialCategories, id)) {
+      throw new Error(DUPLICATE_CATEGORY_NAME_ERROR);
+    }
+    category.name = data.name.trim();
+  }
   if (data.order !== undefined) category.order = data.order;
   category.updatedAt = new Date();
   await save(store);
@@ -1265,13 +1362,10 @@ export async function updateMaterialCategory(
 
 export async function deleteMaterialCategory(id: string): Promise<void> {
   const store = await load();
-  if (store.materialCategories.length <= 1) {
-    throw new Error("Debe existir al menos una categoría");
-  }
-  const fallback = store.materialCategories.find((c) => c.id !== id);
-  if (!fallback) throw new Error("No hay categoría de destino");
+  const exists = store.materialCategories.some((c) => c.id === id);
+  if (!exists) throw new Error("Categoría no encontrada");
   for (const material of store.materials) {
-    if (material.categoryId === id) material.categoryId = fallback.id;
+    if (material.categoryId === id) material.categoryId = null;
   }
   store.materialCategories = store.materialCategories.filter((c) => c.id !== id);
   store.materialCategories
@@ -1301,7 +1395,10 @@ export async function createMaterial(input: {
   const material: Material = {
     id: createId("mat"),
     name: input.name.trim(),
-    categoryId: input.categoryId ?? categories[0]?.id ?? null,
+    categoryId:
+      input.categoryId === undefined
+        ? (categories[0]?.id ?? null)
+        : input.categoryId,
     unit: input.unit,
     costPrice: input.costPrice,
     createdAt: new Date(),

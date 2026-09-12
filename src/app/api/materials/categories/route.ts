@@ -31,6 +31,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const category = await db.createMaterialCategory({ name: parsed.data.name });
-  return NextResponse.json({ category }, { status: 201 });
+  try {
+    const category = await db.createMaterialCategory({ name: parsed.data.name });
+    return NextResponse.json({ category }, { status: 201 });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "No se pudo crear la categoría";
+    const status = message.includes("Ya existe") ? 409 : 400;
+    return NextResponse.json({ error: message }, { status });
+  }
 }

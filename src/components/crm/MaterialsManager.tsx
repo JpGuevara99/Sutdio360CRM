@@ -54,16 +54,26 @@ export function MaterialsManager({
   const router = useRouter();
   const [materials, setMaterials] = useState(initialMaterials);
   const [categories, setCategories] = useState(initialCategories);
-  const [editingCategories, setEditingCategories] = useState(false);
+  const [managingCatalog, setManagingCatalog] = useState(false);
+  const [manageQuery, setManageQuery] = useState("");
+  const [manageTab, setManageTab] = useState<"materials" | "categories">(
+    "materials",
+  );
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [creatingCategory, setCreatingCategory] = useState(false);
   const [createForm, setCreateForm] = useState<FormState>(
     emptyForm(initialCategories[0]?.id ?? ""),
   );
   const [editForm, setEditForm] = useState<FormState>(emptyForm());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(
-    null,
+  const [deletingMaterialIds, setDeletingMaterialIds] = useState<string[]>([]);
+  const [deletingCategoryIds, setDeletingCategoryIds] = useState<string[]>([]);
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(
+    new Set(),
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,26 +107,32 @@ export function MaterialsManager({
   useEffect(() => {
     if (
       !editingId &&
-      !deletingId &&
+      deletingMaterialIds.length === 0 &&
       !creating &&
-      !editingCategories &&
-      !deletingCategoryId
+      !creatingCategory &&
+      !managingCatalog &&
+      deletingCategoryIds.length === 0
     ) {
       return;
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (deletingCategoryId) {
-          setDeletingCategoryId(null);
+        if (deletingCategoryIds.length > 0) {
+          setDeletingCategoryIds([]);
           return;
         }
-        if (deletingId) {
-          setDeletingId(null);
+        if (deletingMaterialIds.length > 0) {
+          setDeletingMaterialIds([]);
+          return;
+        }
+        if (plusMenuOpen) {
+          setPlusMenuOpen(false);
           return;
         }
         setEditingId(null);
         setCreating(false);
-        setEditingCategories(false);
+        setCreatingCategory(false);
+        setManagingCatalog(false);
         setEditingCategoryId(null);
         setModalError(null);
       }
@@ -125,23 +141,24 @@ export function MaterialsManager({
     return () => window.removeEventListener("keydown", onKey);
   }, [
     editingId,
-    deletingId,
+    deletingMaterialIds,
     creating,
-    editingCategories,
-    deletingCategoryId,
+    creatingCategory,
+    managingCatalog,
+    deletingCategoryIds,
+    plusMenuOpen,
   ]);
 
   const categoryNameById = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c.name]));
   }, [categories]);
 
-  const deletingMaterial = deletingId
-    ? (materials.find((m) => m.id === deletingId) ?? null)
-    : null;
-
-  const deletingCategory = deletingCategoryId
-    ? (categories.find((c) => c.id === deletingCategoryId) ?? null)
-    : null;
+  const deletingMaterials = materials.filter((m) =>
+    deletingMaterialIds.includes(m.id),
+  );
+  const deletingCategories = categories.filter((c) =>
+    deletingCategoryIds.includes(c.id),
+  );
 
   const filteredMaterials = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -149,7 +166,17 @@ export function MaterialsManager({
     const max = costMax.trim() === "" ? null : Number(costMax.replace(",", "."));
 
     let list = materials.filter((material) => {
-      if (categoryFilter !== "all" && material.categoryId !== categoryFilter) {
+      if (
+        categoryFilter === "uncategorized" &&
+        material.categoryId != null
+      ) {
+        return false;
+      }
+      if (
+        categoryFilter !== "all" &&
+        categoryFilter !== "uncategorized" &&
+        material.categoryId !== categoryFilter
+      ) {
         return false;
       }
       if (min != null && Number.isFinite(min) && material.costPrice < min) {
@@ -190,6 +217,27 @@ export function MaterialsManager({
     sortBy,
     categoryNameById,
   ]);
+
+  const manageFilteredMaterials = useMemo(() => {
+    const q = manageQuery.trim().toLowerCase();
+    if (!q) return materials;
+    return materials.filter((material) => {
+      const category = material.categoryId
+        ? (categoryNameById.get(material.categoryId) ?? "sin categoría")
+        : "sin categoría";
+      return `${material.name} ${category} ${MATERIAL_UNIT_LABELS[material.unit]}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [materials, manageQuery, categoryNameById]);
+
+  const manageFilteredCategories = useMemo(() => {
+    const q = manageQuery.trim().toLowerCase();
+    if (!q) return categories;
+    return categories.filter((category) =>
+      category.name.toLowerCase().includes(q),
+    );
+  }, [categories, manageQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredMaterials.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -259,10 +307,6 @@ export function MaterialsManager({
       setModalError("Ingresa el nombre del material");
       return false;
     }
-    if (!form.categoryId) {
-      setModalError("Selecciona una categoría");
-      return false;
-    }
     if (costPrice == null || costPrice < 0) {
       setModalError("Ingresa un precio de costo válido");
       return false;
@@ -271,7 +315,7 @@ export function MaterialsManager({
     setSaving(true);
     const payload = {
       name: form.name.trim(),
-      categoryId: form.categoryId,
+      categoryId: form.categoryId || null,
       unit: form.unit,
       costPrice,
     };
@@ -326,30 +370,46 @@ export function MaterialsManager({
   }
 
   async function confirmDelete() {
-    if (!deletingId) return;
+    if (deletingMaterialIds.length === 0) return;
     setSaving(true);
     setError(null);
-    const res = await fetch(`/api/materials/${deletingId}`, {
-      method: "DELETE",
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      setError(data.error ?? "No se pudo eliminar");
-      setDeletingId(null);
-      return;
+    const failed: string[] = [];
+    const removed = new Set<string>();
+    for (const id of deletingMaterialIds) {
+      const res = await fetch(`/api/materials/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        failed.push(data.error ?? "No se pudo eliminar");
+        continue;
+      }
+      removed.add(id);
     }
-    setMaterials((list) => list.filter((m) => m.id !== deletingId));
-    if (editingId === deletingId) closeEdit();
-    setDeletingId(null);
+    setSaving(false);
+    if (removed.size > 0) {
+      setMaterials((list) => list.filter((m) => !removed.has(m.id)));
+      setSelectedMaterialIds((prev) => {
+        const next = new Set(prev);
+        for (const id of removed) next.delete(id);
+        return next;
+      });
+      if (editingId && removed.has(editingId)) closeEdit();
+    }
+    setDeletingMaterialIds([]);
+    if (failed.length > 0) {
+      setError(failed[0] ?? "No se pudieron eliminar algunos materiales");
+    }
     router.refresh();
   }
 
   async function addCategory() {
     const name = categoryName.trim();
-    if (!name) return;
+    if (!name) {
+      setModalError("Ingresa el nombre de la categoría");
+      return;
+    }
     setSaving(true);
     setError(null);
+    setModalError(null);
     const res = await fetch("/api/materials/categories", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -361,7 +421,9 @@ export function MaterialsManager({
     };
     setSaving(false);
     if (!res.ok || !data.category) {
-      setError(data.error ?? "No se pudo crear la categoría");
+      const message = data.error ?? "No se pudo crear la categoría";
+      setModalError(message);
+      setError(message);
       return;
     }
     setCategories((list) => [
@@ -373,6 +435,7 @@ export function MaterialsManager({
       },
     ]);
     setCategoryName("");
+    setCreatingCategory(false);
     router.refresh();
   }
 
@@ -406,46 +469,52 @@ export function MaterialsManager({
   }
 
   async function confirmDeleteCategory() {
-    if (!deletingCategoryId) return;
+    if (deletingCategoryIds.length === 0) return;
     setSaving(true);
     setError(null);
-    const res = await fetch(`/api/materials/categories/${deletingCategoryId}`, {
-      method: "DELETE",
-    });
-    const data = (await res.json()) as { error?: string };
-    setSaving(false);
-    if (!res.ok) {
-      setError(data.error ?? "No se pudo eliminar la categoría");
-      setDeletingCategoryId(null);
-      return;
+    const failed: string[] = [];
+    const removed = new Set<string>();
+    for (const id of deletingCategoryIds) {
+      const res = await fetch(`/api/materials/categories/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        failed.push(data.error ?? "No se pudo eliminar la categoría");
+        continue;
+      }
+      removed.add(id);
     }
-    const fallback =
-      categories.find((c) => c.id !== deletingCategoryId)?.id ?? null;
-    setCategories((list) => list.filter((c) => c.id !== deletingCategoryId));
-    if (fallback) {
+    setSaving(false);
+    if (removed.size > 0) {
+      setCategories((list) => list.filter((c) => !removed.has(c.id)));
       setMaterials((list) =>
         list.map((m) =>
-          m.categoryId === deletingCategoryId
-            ? { ...m, categoryId: fallback }
+          m.categoryId && removed.has(m.categoryId)
+            ? { ...m, categoryId: null }
             : m,
         ),
       );
       setCreateForm((f) =>
-        f.categoryId === deletingCategoryId
-          ? { ...f, categoryId: fallback }
+        f.categoryId && removed.has(f.categoryId)
+          ? { ...f, categoryId: "" }
           : f,
       );
+      setSelectedCategoryIds((prev) => {
+        const next = new Set(prev);
+        for (const id of removed) next.delete(id);
+        return next;
+      });
+      if (editingCategoryId && removed.has(editingCategoryId)) {
+        setEditingCategoryId(null);
+        setEditingCategoryName("");
+      }
     }
-    if (editingCategoryId === deletingCategoryId) {
-      setEditingCategoryId(null);
-      setEditingCategoryName("");
+    setDeletingCategoryIds([]);
+    if (failed.length > 0) {
+      setError(failed[0] ?? "No se pudieron eliminar algunas categorías");
     }
-    setDeletingCategoryId(null);
     router.refresh();
-  }
-
-  async function deleteCategory(id: string) {
-    setDeletingCategoryId(id);
   }
 
   function exportCsv() {
@@ -533,23 +602,65 @@ export function MaterialsManager({
       {/* Toolbar suelta */}
       <div className="shrink-0 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setPlusMenuOpen((open) => !open)}
+              title="Agregar"
+              aria-label="Agregar material o categoría"
+              aria-expanded={plusMenuOpen}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#1a73e8] text-white shadow-sm hover:bg-[#1765cc]"
+            >
+              <PlusIcon />
+            </button>
+            {plusMenuOpen ? (
+              <>
+                <button
+                  type="button"
+                  aria-label="Cerrar menú"
+                  className="fixed inset-0 z-40 cursor-default"
+                  onClick={() => setPlusMenuOpen(false)}
+                />
+                <div className="absolute left-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPlusMenuOpen(false);
+                      openCreate();
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm text-foreground transition hover:bg-hover"
+                  >
+                    Agregar material
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPlusMenuOpen(false);
+                      setCategoryName("");
+                      setModalError(null);
+                      setCreatingCategory(true);
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm text-foreground transition hover:bg-hover"
+                  >
+                    Agregar categoría
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
           <button
             type="button"
-            onClick={openCreate}
-            title="Agregar material"
-            aria-label="Agregar material"
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#1a73e8] text-white shadow-sm hover:bg-[#1765cc]"
+            onClick={() => {
+              setManagingCatalog(true);
+              setManageTab("materials");
+              setSelectedMaterialIds(new Set());
+              setSelectedCategoryIds(new Set());
+              setManageQuery("");
+              setError(null);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted-strong hover:bg-hover"
           >
-            <PlusIcon />
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditingCategories(true)}
-            title="Editar categorías"
-            aria-label="Editar categorías"
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted hover:bg-hover hover:text-foreground"
-          >
-            <CategoriesIcon />
+            Gestionar
           </button>
           <div className="relative min-w-[200px] flex-1">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
@@ -618,6 +729,7 @@ export function MaterialsManager({
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-primary"
                 >
                   <option value="all">Todas</option>
+                  <option value="uncategorized">Sin categoría</option>
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
@@ -709,9 +821,6 @@ export function MaterialsManager({
             </thead>
             <tbody>
               {pagedMaterials.map((material) => {
-                const categoryLabel = material.categoryId
-                  ? (categoryNameById.get(material.categoryId) ?? "—")
-                  : "—";
                 return (
                   <tr
                     key={material.id}
@@ -722,7 +831,10 @@ export function MaterialsManager({
                     </td>
                     <td className="px-4 py-2.5">
                       <span className="inline-flex max-w-[14rem] truncate rounded-full bg-primary-soft px-2.5 py-0.5 text-xs font-medium text-primary-text">
-                        {categoryLabel}
+                        {material.categoryId
+                          ? (categoryNameById.get(material.categoryId) ??
+                            "Sin categoría")
+                          : "Sin categoría"}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-muted">
@@ -747,7 +859,7 @@ export function MaterialsManager({
                         <button
                           type="button"
                           disabled={saving}
-                          onClick={() => setDeletingId(material.id)}
+                          onClick={() => setDeletingMaterialIds([material.id])}
                           title="Eliminar"
                           aria-label={`Eliminar ${material.name}`}
                           className="inline-flex min-h-10 min-w-10 items-center justify-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium text-danger hover:border-danger hover:bg-danger-soft disabled:opacity-60"
@@ -853,112 +965,309 @@ export function MaterialsManager({
         ) : null}
       </section>
 
-      {editingCategories ? (
+      {managingCatalog ? (
         <Modal
-          title="Categorías de materiales"
+          title="Gestionar catálogo"
+          wide
+          extraWide
           onClose={() => {
-            setEditingCategories(false);
+            setManagingCatalog(false);
             setEditingCategoryId(null);
             setEditingCategoryName("");
-            setCategoryName("");
+            setSelectedMaterialIds(new Set());
+            setSelectedCategoryIds(new Set());
+            setManageQuery("");
           }}
-          wide
         >
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              <input
-                value={categoryName}
-                onChange={(e) => setCategoryName(e.target.value)}
-                placeholder="Nueva categoría"
-                className="min-w-[220px] flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void addCategory();
-                  }
-                }}
-              />
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setManageTab("materials")}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                manageTab === "materials"
+                  ? "bg-primary-soft text-primary-text"
+                  : "text-muted hover:bg-hover"
+              }`}
+            >
+              Materiales
+            </button>
+            <button
+              type="button"
+              onClick={() => setManageTab("categories")}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                manageTab === "categories"
+                  ? "bg-primary-soft text-primary-text"
+                  : "text-muted hover:bg-hover"
+              }`}
+            >
+              Categorías
+            </button>
+            {manageTab === "materials" && selectedMaterialIds.size > 0 ? (
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => void addCategory()}
-                className="rounded-full bg-[#1a73e8] px-4 py-2 text-sm font-medium text-white hover:bg-[#1765cc] disabled:opacity-60"
+                onClick={() =>
+                  setDeletingMaterialIds([...selectedMaterialIds])
+                }
+                className="ml-auto rounded-full border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger-soft disabled:opacity-60"
               >
-                Agregar
+                Eliminar {selectedMaterialIds.size} seleccionado
+                {selectedMaterialIds.size === 1 ? "" : "s"}
               </button>
-            </div>
+            ) : null}
+            {manageTab === "categories" && selectedCategoryIds.size > 0 ? (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() =>
+                  setDeletingCategoryIds([...selectedCategoryIds])
+                }
+                className="ml-auto rounded-full border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger-soft disabled:opacity-60"
+              >
+                Eliminar {selectedCategoryIds.size} seleccionada
+                {selectedCategoryIds.size === 1 ? "" : "s"}
+              </button>
+            ) : null}
+          </div>
 
-            <ul className="max-h-[50vh] divide-y divide-border overflow-y-auto rounded-lg border border-border">
-              {categories.map((category) => (
-                <li
-                  key={category.id}
-                  className="flex flex-wrap items-center gap-2 px-3 py-2.5"
-                >
-                  {editingCategoryId === category.id ? (
-                    <>
+          <div className="relative mb-3">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+              <SearchIcon />
+            </span>
+            <input
+              value={manageQuery}
+              onChange={(e) => setManageQuery(e.target.value)}
+              placeholder={
+                manageTab === "materials"
+                  ? "Buscar material…"
+                  : "Buscar categoría…"
+              }
+              className="w-full rounded-lg border border-border bg-surface py-2 pl-10 pr-3 text-sm outline-none focus:border-primary"
+            />
+          </div>
+
+          {manageTab === "materials" ? (
+            <ul className="max-h-[55vh] divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {manageFilteredMaterials.length === 0 ? (
+                <li className="px-3 py-8 text-center text-sm text-muted">
+                  {materials.length === 0
+                    ? "No hay materiales"
+                    : "Sin resultados"}
+                </li>
+              ) : (
+                manageFilteredMaterials.map((material) => {
+                  const checked = selectedMaterialIds.has(material.id);
+                  return (
+                    <li
+                      key={material.id}
+                      className="flex items-center gap-3 px-3 py-2.5"
+                    >
                       <input
-                        autoFocus
-                        value={editingCategoryName}
-                        onChange={(e) => setEditingCategoryName(e.target.value)}
-                        className="min-w-0 flex-1 rounded border border-primary px-2 py-1 text-sm outline-none"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            void saveCategoryName(category.id);
-                          }
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedMaterialIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(material.id)) next.delete(material.id);
+                            else next.add(material.id);
+                            return next;
+                          });
                         }}
+                        className="accent-[#1a73e8]"
+                        aria-label={`Seleccionar ${material.name}`}
                       />
-                      <button
-                        type="button"
-                        onClick={() => void saveCategoryName(category.id)}
-                        className="rounded-full px-3 py-1 text-sm text-primary-text hover:bg-primary-soft"
-                      >
-                        Guardar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingCategoryId(null);
-                          setEditingCategoryName("");
-                        }}
-                        className="rounded-full px-3 py-1 text-sm text-muted hover:bg-hover"
-                      >
-                        Cancelar
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="min-w-0 flex-1 text-sm text-foreground">
-                        {category.name}
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-foreground">
+                          {material.name}
+                        </span>
+                        <span className="block text-xs text-muted">
+                          {material.categoryId
+                            ? (categoryNameById.get(material.categoryId) ??
+                              "Sin categoría")
+                            : "Sin categoría"}{" "}
+                          · {MATERIAL_UNIT_LABELS[material.unit]} ·{" "}
+                          {formatClp(material.costPrice)}
+                        </span>
                       </span>
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditingCategoryId(category.id);
-                          setEditingCategoryName(category.name);
-                        }}
-                        title="Renombrar"
-                        aria-label={`Renombrar ${category.name}`}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-primary-text hover:bg-primary-soft"
+                        onClick={() => openEdit(material)}
+                        className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-primary-text hover:bg-primary-soft"
                       >
-                        <PencilIcon />
+                        Editar
                       </button>
                       <button
                         type="button"
                         disabled={saving}
-                        onClick={() => void deleteCategory(category.id)}
-                        title="Eliminar"
-                        aria-label={`Eliminar ${category.name}`}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-danger hover:bg-danger-soft disabled:opacity-60"
+                        onClick={() => setDeletingMaterialIds([material.id])}
+                        className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger-soft disabled:opacity-60"
                       >
-                        <TrashIcon />
+                        Eliminar
                       </button>
-                    </>
-                  )}
-                </li>
-              ))}
+                    </li>
+                  );
+                })
+              )}
             </ul>
-          </div>
+          ) : (
+            <ul className="max-h-[55vh] divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {manageFilteredCategories.length === 0 ? (
+                <li className="px-3 py-8 text-center text-sm text-muted">
+                  {categories.length === 0
+                    ? "No hay categorías"
+                    : "Sin resultados"}
+                </li>
+              ) : (
+                manageFilteredCategories.map((category) => {
+                  const checked = selectedCategoryIds.has(category.id);
+                  const count = materials.filter(
+                    (m) => m.categoryId === category.id,
+                  ).length;
+                  return (
+                    <li
+                      key={category.id}
+                      className="flex flex-wrap items-center gap-2 px-3 py-2.5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedCategoryIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(category.id)) next.delete(category.id);
+                            else next.add(category.id);
+                            return next;
+                          });
+                        }}
+                        className="accent-[#1a73e8]"
+                        aria-label={`Seleccionar ${category.name}`}
+                      />
+                      {editingCategoryId === category.id ? (
+                        <>
+                          <input
+                            autoFocus
+                            value={editingCategoryName}
+                            onChange={(e) =>
+                              setEditingCategoryName(e.target.value)
+                            }
+                            className="min-w-0 flex-1 rounded border border-primary px-2 py-1 text-sm outline-none"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void saveCategoryName(category.id);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void saveCategoryName(category.id)}
+                            className="rounded-full px-3 py-1 text-sm text-primary-text hover:bg-primary-soft"
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingCategoryId(null);
+                              setEditingCategoryName("");
+                            }}
+                            className="rounded-full px-3 py-1 text-sm text-muted hover:bg-hover"
+                          >
+                            Cancelar
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="min-w-0 flex-1 text-sm text-foreground">
+                            {category.name}
+                            <span className="ml-2 text-xs text-muted">
+                              {count} material{count === 1 ? "" : "es"}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingCategoryId(category.id);
+                              setEditingCategoryName(category.name);
+                            }}
+                            className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-primary-text hover:bg-primary-soft"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() =>
+                              setDeletingCategoryIds([category.id])
+                            }
+                            className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger-soft disabled:opacity-60"
+                          >
+                            Eliminar
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          )}
+        </Modal>
+      ) : null}
+
+      {creatingCategory ? (
+        <Modal
+          title="Agregar categoría"
+          onClose={() => {
+            setCreatingCategory(false);
+            setCategoryName("");
+            setModalError(null);
+          }}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void addCategory();
+            }}
+            className="space-y-4"
+          >
+            <label className="block text-sm">
+              <span className="mb-1 block text-muted">Nombre</span>
+              <input
+                autoFocus
+                required
+                value={categoryName}
+                onChange={(e) => setCategoryName(e.target.value)}
+                placeholder="Ej. Electricidad"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-primary"
+              />
+            </label>
+            {modalError ? (
+              <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+                {modalError}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCreatingCategory(false);
+                  setCategoryName("");
+                  setModalError(null);
+                }}
+                className="rounded-full border border-border px-4 py-2 text-sm text-muted-strong hover:bg-hover"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-full bg-[#1a73e8] px-4 py-2 text-sm font-medium text-white hover:bg-[#1765cc] disabled:opacity-60"
+              >
+                Guardar
+              </button>
+            </div>
+          </form>
         </Modal>
       ) : null}
 
@@ -1028,19 +1337,38 @@ export function MaterialsManager({
         </Modal>
       ) : null}
 
-      {deletingMaterial ? (
-        <Modal title="Eliminar material" onClose={() => setDeletingId(null)}>
+      {deletingMaterials.length > 0 ? (
+        <Modal
+          title={
+            deletingMaterials.length === 1
+              ? "Eliminar material"
+              : "Eliminar materiales"
+          }
+          onClose={() => setDeletingMaterialIds([])}
+        >
           <p className="text-sm text-muted-strong">
-            ¿Seguro que quieres eliminar{" "}
-            <span className="font-medium text-foreground">
-              {deletingMaterial.name}
-            </span>
-            ? Esta acción no se puede deshacer.
+            {deletingMaterials.length === 1 ? (
+              <>
+                ¿Seguro que quieres eliminar{" "}
+                <span className="font-medium text-foreground">
+                  {deletingMaterials[0]?.name}
+                </span>
+                ? Esta acción no se puede deshacer.
+              </>
+            ) : (
+              <>
+                ¿Seguro que quieres eliminar{" "}
+                <span className="font-medium text-foreground">
+                  {deletingMaterials.length} materiales
+                </span>
+                ? Esta acción no se puede deshacer.
+              </>
+            )}
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setDeletingId(null)}
+              onClick={() => setDeletingMaterialIds([])}
               className="rounded-full border border-border px-4 py-2 text-sm text-muted-strong hover:bg-hover"
             >
               Cancelar
@@ -1057,23 +1385,46 @@ export function MaterialsManager({
         </Modal>
       ) : null}
 
-      {deletingCategory ? (
+      {deletingCategories.length > 0 ? (
         <Modal
-          title="Eliminar categoría"
-          onClose={() => setDeletingCategoryId(null)}
+          title={
+            deletingCategories.length === 1
+              ? "Eliminar categoría"
+              : "Eliminar categorías"
+          }
+          onClose={() => setDeletingCategoryIds([])}
         >
           <p className="text-sm text-muted-strong">
-            ¿Seguro que quieres eliminar{" "}
-            <span className="font-medium text-foreground">
-              {deletingCategory.name}
-            </span>
-            ? Los materiales de esta categoría se moverán a otra. Esta acción no
-            se puede deshacer.
+            {deletingCategories.length === 1 ? (
+              <>
+                ¿Seguro que quieres eliminar{" "}
+                <span className="font-medium text-foreground">
+                  {deletingCategories[0]?.name}
+                </span>
+                ? Los materiales de esta categoría quedarán con el tag{" "}
+                <span className="font-medium text-foreground">
+                  Sin categoría
+                </span>
+                . Esta acción no se puede deshacer.
+              </>
+            ) : (
+              <>
+                ¿Seguro que quieres eliminar{" "}
+                <span className="font-medium text-foreground">
+                  {deletingCategories.length} categorías
+                </span>
+                ? Los materiales asignados quedarán con el tag{" "}
+                <span className="font-medium text-foreground">
+                  Sin categoría
+                </span>
+                . Esta acción no se puede deshacer.
+              </>
+            )}
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setDeletingCategoryId(null)}
+              onClick={() => setDeletingCategoryIds([])}
               className="rounded-full border border-border px-4 py-2 text-sm text-muted-strong hover:bg-hover"
             >
               Cancelar
@@ -1118,11 +1469,11 @@ function MaterialFields({
       <label className="block text-sm">
         <span className="mb-1 block text-muted">Categoría</span>
         <select
-          required
           value={form.categoryId}
           onChange={(e) => onChange({ ...form, categoryId: e.target.value })}
           className="w-full rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-primary"
         >
+          <option value="">Sin categoría</option>
           {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}
@@ -1168,11 +1519,13 @@ function Modal({
   onClose,
   children,
   wide = false,
+  extraWide = false,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   wide?: boolean;
+  extraWide?: boolean;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1184,7 +1537,7 @@ function Modal({
       />
       <div
         className={`relative z-10 w-full rounded-xl border border-border bg-surface p-5 shadow-xl ${
-          wide ? "max-w-xl" : "max-w-lg"
+          extraWide ? "max-w-2xl" : wide ? "max-w-xl" : "max-w-lg"
         }`}
       >
         <div className="mb-4 flex items-start justify-between gap-3">
@@ -1201,27 +1554,6 @@ function Modal({
         {children}
       </div>
     </div>
-  );
-}
-
-function CategoriesIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M4 7h16" />
-      <path d="M4 12h10" />
-      <path d="M4 17h7" />
-      <path d="M16 15l2 2 4-4" />
-    </svg>
   );
 }
 

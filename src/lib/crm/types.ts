@@ -122,6 +122,25 @@ export type ProjectNote = {
   updatedAt: Date;
 };
 
+export type ProjectExpenseCategory =
+  | "MATERIALES"
+  | "MANO_OBRA"
+  | "TRANSPORTE"
+  | "SUBCONTRATOS"
+  | "OTROS";
+
+/** Gasto real registrado sobre un proyecto ya concretado */
+export type ProjectExpense = {
+  id: string;
+  projectId: string;
+  amount: number;
+  description: string;
+  category: ProjectExpenseCategory;
+  expenseDate: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type PipelineStage = {
   id: string;
   name: string;

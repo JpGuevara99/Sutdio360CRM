@@ -21,6 +21,7 @@ import {
 } from "@/lib/crm/labels";
 import { groupQuoteLinesByCategory } from "@/lib/crm/quote-groups";
 import { formatCompanyFooter } from "@/lib/crm/company";
+import { formatEntityCode } from "@/lib/crm/project-codes";
 import { QuoteObservationsBanner } from "@/components/crm/QuoteObservationsBanner";
 import type {
   Client,
@@ -256,6 +257,13 @@ export function QuotePrintView({
               className="h-12 w-auto object-contain object-left"
             />
             <dl className="mt-4 space-y-1 text-[15px] leading-snug">
+              <div className="grid grid-cols-[88px_1fr] gap-2">
+                <dt className="text-neutral-500">Proyecto:</dt>
+                <dd className="font-semibold tracking-wide">
+                  {formatEntityCode(project.publicCode)}
+                  {project.title?.trim() ? ` · ${project.title.trim()}` : ""}
+                </dd>
+              </div>
               <div className="grid grid-cols-[88px_1fr] gap-2">
                 <dt className="text-neutral-500">Cotización:</dt>
                 <dd className="font-semibold tracking-wide">

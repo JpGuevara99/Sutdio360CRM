@@ -1,4 +1,9 @@
-import type { MaterialUnit, ProjectStatus, VisitSource } from "@/lib/crm/types";
+import type {
+  MaterialUnit,
+  ProjectExpenseCategory,
+  ProjectStatus,
+  VisitSource,
+} from "@/lib/crm/types";
 
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   RESERVADO: "Reservado",
@@ -32,6 +37,21 @@ export const MATERIAL_UNIT_LABELS: Record<MaterialUnit, string> = {
 export const MATERIAL_UNITS = Object.keys(
   MATERIAL_UNIT_LABELS,
 ) as MaterialUnit[];
+
+export const PROJECT_EXPENSE_CATEGORY_LABELS: Record<
+  ProjectExpenseCategory,
+  string
+> = {
+  MATERIALES: "Materiales",
+  MANO_OBRA: "Mano de obra",
+  TRANSPORTE: "Transporte",
+  SUBCONTRATOS: "Subcontratos",
+  OTROS: "Otros",
+};
+
+export const PROJECT_EXPENSE_CATEGORIES = Object.keys(
+  PROJECT_EXPENSE_CATEGORY_LABELS,
+) as ProjectExpenseCategory[];
 
 export function clientFullName(client: {
   firstName: string;

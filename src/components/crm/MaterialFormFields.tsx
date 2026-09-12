@@ -49,11 +49,11 @@ export function MaterialFormFields({
       <label className="block text-sm">
         <span className="mb-1 block text-muted">Categoría</span>
         <select
-          required
           value={form.categoryId}
           onChange={(e) => onChange({ ...form, categoryId: e.target.value })}
           className="w-full rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-primary"
         >
+          <option value="">Sin categoría</option>
           {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}

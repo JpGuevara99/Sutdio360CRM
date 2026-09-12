@@ -18,6 +18,8 @@ import type {
   PipelineStage,
   Project,
   ProjectClosingOutcome,
+  ProjectExpense,
+  ProjectExpenseCategory,
   ProjectNote,
   ProjectStatus,
   ProjectWithRelations,
@@ -45,6 +47,8 @@ import {
 } from "@/lib/crm/follow-ups";
 import {
   DEFAULT_MATERIAL_CATEGORIES,
+  DUPLICATE_CATEGORY_NAME_ERROR,
+  isDuplicateCategoryName,
   sortMaterialCategories,
 } from "@/lib/crm/material-categories";
 import { buildEntityCode } from "@/lib/crm/project-codes";
@@ -262,6 +266,98 @@ export async function updateProjectNote(
 
 export async function deleteProjectNote(noteId: string): Promise<void> {
   await getAdminDb().collection("projectNotes").doc(noteId).delete();
+}
+
+function mapProjectExpense(id: string, data: DocumentData): ProjectExpense {
+  return {
+    id,
+    projectId: data.projectId,
+    amount: Number(data.amount ?? 0),
+    description: String(data.description ?? ""),
+    category: (data.category ?? "OTROS") as ProjectExpenseCategory,
+    expenseDate: toDate(data.expenseDate ?? data.createdAt),
+    createdAt: toDate(data.createdAt),
+    updatedAt: toDate(data.updatedAt ?? data.createdAt),
+  };
+}
+
+export async function listAllProjectExpenses(): Promise<ProjectExpense[]> {
+  const docs = await readCollection("projectExpenses");
+  return docs
+    .map((d) => mapProjectExpense(d.id, d.data))
+    .sort((a, b) => b.expenseDate.getTime() - a.expenseDate.getTime());
+}
+
+export async function listProjectExpenses(
+  projectId: string,
+): Promise<ProjectExpense[]> {
+  const db = getAdminDb();
+  const snap = await db
+    .collection("projectExpenses")
+    .where("projectId", "==", projectId)
+    .get();
+  return snap.docs
+    .map((doc) => mapProjectExpense(doc.id, doc.data()))
+    .sort((a, b) => b.expenseDate.getTime() - a.expenseDate.getTime());
+}
+
+export async function createProjectExpense(input: {
+  projectId: string;
+  amount: number;
+  description: string;
+  category: ProjectExpenseCategory;
+  expenseDate: Date;
+}): Promise<ProjectExpense> {
+  const id = createId("exp");
+  const now = new Date();
+  const payload = {
+    projectId: input.projectId,
+    amount: input.amount,
+    description: input.description.trim(),
+    category: input.category,
+    expenseDate: input.expenseDate,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await getAdminDb().collection("projectExpenses").doc(id).set(payload);
+  return mapProjectExpense(id, payload);
+}
+
+export async function updateProjectExpense(
+  expenseId: string,
+  data: Partial<
+    Pick<ProjectExpense, "amount" | "description" | "category" | "expenseDate">
+  >,
+): Promise<ProjectExpense> {
+  const ref = getAdminDb().collection("projectExpenses").doc(expenseId);
+  const existing = await ref.get();
+  if (!existing.exists) throw new Error("Expense not found");
+  await ref.update(
+    stripUndefined({
+      amount: data.amount,
+      description: data.description?.trim(),
+      category: data.category,
+      expenseDate: data.expenseDate,
+      updatedAt: new Date(),
+    }),
+  );
+  const fresh = await ref.get();
+  return mapProjectExpense(fresh.id, fresh.data()!);
+}
+
+export async function deleteProjectExpense(expenseId: string): Promise<void> {
+  await getAdminDb().collection("projectExpenses").doc(expenseId).delete();
+}
+
+export async function getProjectExpenseById(
+  expenseId: string,
+): Promise<ProjectExpense | null> {
+  const snap = await getAdminDb()
+    .collection("projectExpenses")
+    .doc(expenseId)
+    .get();
+  if (!snap.exists) return null;
+  return mapProjectExpense(snap.id, snap.data()!);
 }
 
 export async function getProjectNoteById(
@@ -778,7 +874,12 @@ export async function hardDeleteProject(id: string): Promise<void> {
     for (const doc of linesSnap.docs) batch.delete(doc.ref);
   }
 
-  for (const collection of ["projectNotes", "visits", "fileRefs"]) {
+  for (const collection of [
+    "projectNotes",
+    "projectExpenses",
+    "visits",
+    "fileRefs",
+  ]) {
     const snap = await db
       .collection(collection)
       .where("projectId", "==", id)
@@ -1482,6 +1583,9 @@ export async function createMaterialCategory(input: {
   name: string;
 }): Promise<MaterialCategory> {
   const categories = await listMaterialCategories();
+  if (isDuplicateCategoryName(input.name, categories)) {
+    throw new Error(DUPLICATE_CATEGORY_NAME_ERROR);
+  }
   const id = createId("mcg");
   const now = new Date();
   const payload = {
@@ -1498,6 +1602,12 @@ export async function updateMaterialCategory(
   id: string,
   data: Partial<Pick<MaterialCategory, "name" | "order">>,
 ): Promise<MaterialCategory> {
+  if (data.name !== undefined) {
+    const categories = await listMaterialCategories();
+    if (isDuplicateCategoryName(data.name, categories, id)) {
+      throw new Error(DUPLICATE_CATEGORY_NAME_ERROR);
+    }
+  }
   const ref = getAdminDb().collection("materialCategories").doc(id);
   await ref.update(
     stripUndefined({
@@ -1513,11 +1623,8 @@ export async function updateMaterialCategory(
 
 export async function deleteMaterialCategory(id: string): Promise<void> {
   const categories = await listMaterialCategories();
-  if (categories.length <= 1) {
-    throw new Error("Debe existir al menos una categoría");
-  }
-  const fallback = categories.find((c) => c.id !== id);
-  if (!fallback) throw new Error("No hay categoría de destino");
+  const exists = categories.some((c) => c.id === id);
+  if (!exists) throw new Error("Categoría no encontrada");
 
   const db = getAdminDb();
   const materials = await db
@@ -1526,7 +1633,7 @@ export async function deleteMaterialCategory(id: string): Promise<void> {
     .get();
   const batch = db.batch();
   for (const doc of materials.docs) {
-    batch.update(doc.ref, { categoryId: fallback.id, updatedAt: new Date() });
+    batch.update(doc.ref, { categoryId: null, updatedAt: new Date() });
   }
   batch.delete(db.collection("materialCategories").doc(id));
   await batch.commit();
@@ -1563,7 +1670,10 @@ export async function createMaterial(input: {
   const now = new Date();
   const payload = {
     name: input.name.trim(),
-    categoryId: input.categoryId ?? categories[0]?.id ?? null,
+    categoryId:
+      input.categoryId === undefined
+        ? (categories[0]?.id ?? null)
+        : input.categoryId,
     unit: input.unit,
     costPrice: input.costPrice,
     createdAt: now,

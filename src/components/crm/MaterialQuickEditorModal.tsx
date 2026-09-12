@@ -46,10 +46,6 @@ export function MaterialQuickEditorModal({
       setError("Ingresa el nombre del material");
       return;
     }
-    if (!form.categoryId) {
-      setError("Selecciona una categoría");
-      return;
-    }
     if (costPrice == null || costPrice < 0) {
       setError("Ingresa un precio de costo válido");
       return;
@@ -60,7 +56,7 @@ export function MaterialQuickEditorModal({
     try {
       const payload = {
         name: form.name.trim(),
-        categoryId: form.categoryId,
+        categoryId: form.categoryId || null,
         unit: form.unit,
         costPrice,
       };

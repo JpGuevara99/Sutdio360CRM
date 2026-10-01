@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
+import { queueClientMatchReviews } from "@/lib/crm/client-match";
 import { ensureClientDriveFolder, ensureProjectDriveFolder } from "@/lib/crm/drive-sync";
 import { clientFullName } from "@/lib/crm/labels";
+import { createIndependentClient } from "@/lib/crm/upsert-client";
 import type { ProjectWithRelations, VisitSource } from "@/lib/crm/types";
 
 export type NewClientInput = {
@@ -37,6 +39,8 @@ export async function createProjectForClient(
 ): Promise<ProjectWithRelations> {
   let clientId: string;
   let clientLabel: string;
+  let createdClient: Awaited<ReturnType<typeof createIndependentClient>> | null =
+    null;
 
   if (isExistingClient(input.client)) {
     const client = await db.getClientById(input.client.id);
@@ -46,15 +50,15 @@ export async function createProjectForClient(
     clientId = client.id;
     clientLabel = clientFullName(client);
   } else {
-    const created = await db.upsertClient({
+    createdClient = await createIndependentClient({
       firstName: input.client.firstName,
       lastName: input.client.lastName,
       email: input.client.email ?? null,
       phone: input.client.phone ?? null,
       address: input.client.address ?? null,
     });
-    clientId = created.id;
-    clientLabel = clientFullName(created);
+    clientId = createdClient.id;
+    clientLabel = clientFullName(createdClient);
   }
 
   const publicCode = await db.nextPublicCode();
@@ -98,18 +102,39 @@ export async function createProjectForClient(
   if (!full) {
     throw new Error("No se pudo cargar el proyecto creado");
   }
+
+  if (createdClient) {
+    try {
+      await queueClientMatchReviews({
+        client: createdClient,
+        projectId: project.id,
+      });
+    } catch (error) {
+      console.error(
+        "createProjectForClient: client match review failed",
+        error,
+      );
+    }
+  }
+
   return full;
 }
 
 /** Crea un cliente suelto (con su código y carpeta de Drive). */
 export async function createClient(input: NewClientInput) {
-  const client = await db.upsertClient({
+  const client = await createIndependentClient({
     firstName: input.firstName,
     lastName: input.lastName,
     email: input.email ?? null,
     phone: input.phone ?? null,
     address: input.address ?? null,
   });
+
+  try {
+    await queueClientMatchReviews({ client, projectId: null });
+  } catch (error) {
+    console.error("createClient: client match review failed", error);
+  }
 
   try {
     return await ensureClientDriveFolder(client.id);

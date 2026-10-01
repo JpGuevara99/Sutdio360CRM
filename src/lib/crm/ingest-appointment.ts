@@ -10,7 +10,8 @@ import {
 } from "@/lib/google/calendar";
 import { ensureProjectDriveFolder } from "@/lib/crm/drive-sync";
 import { formatEntityCode } from "@/lib/crm/project-codes";
-import { upsertClient } from "@/lib/crm/upsert-client";
+import { queueClientMatchReviews } from "@/lib/crm/client-match";
+import { createIndependentClient } from "@/lib/crm/upsert-client";
 
 async function materializeAppointment(parsed: ParsedAppointment) {
   const existing = await db.getProjectByCalendarEventId(parsed.calendarEventId);
@@ -40,7 +41,7 @@ async function materializeAppointment(parsed: ParsedAppointment) {
     return { project: refreshed ?? existing, created: false };
   }
 
-  const client = await upsertClient({
+  const client = await createIndependentClient({
     firstName: parsed.firstName,
     lastName: parsed.lastName,
     email: parsed.email,
@@ -90,6 +91,15 @@ async function materializeAppointment(parsed: ParsedAppointment) {
   const refreshed = await db.getProjectById(project.id);
   if (!refreshed) {
     throw new Error("Project missing after create");
+  }
+
+  try {
+    await queueClientMatchReviews({
+      client,
+      projectId: project.id,
+    });
+  } catch (error) {
+    console.error("materializeAppointment: client match review failed", error);
   }
 
   return { project: refreshed, created: true };

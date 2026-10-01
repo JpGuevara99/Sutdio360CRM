@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { notifyClientMatchReviews } from "@/components/crm/ClientMatchReviewHost";
 import { clientFullName } from "@/lib/crm/labels";
 import { formatEntityCode } from "@/lib/crm/project-codes";
 import type { ClientWithProjects } from "@/lib/crm/types";
@@ -159,6 +160,7 @@ export function ProjectCreateForm({
       if (data.warning) {
         setError(data.warning);
       }
+      notifyClientMatchReviews();
       if (onCreated) {
         onCreated(data.project.id);
       } else {

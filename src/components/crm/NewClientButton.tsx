@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { notifyClientMatchReviews } from "@/components/crm/ClientMatchReviewHost";
 
 /** Botón "+ Nuevo cliente": crea el cliente con su código y carpeta en Drive. */
 export function NewClientButton() {
@@ -45,6 +46,7 @@ export function NewClientButton() {
       }
       setOpen(false);
       setBusy(false);
+      notifyClientMatchReviews();
       router.push(`/clientes/${data.client.id}`);
       router.refresh();
     } catch {

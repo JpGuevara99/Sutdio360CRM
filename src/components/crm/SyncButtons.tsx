@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { notifyClientMatchReviews } from "@/components/crm/ClientMatchReviewHost";
 
 const AUTO_SYNC_MS = 60_000;
 
@@ -56,6 +57,8 @@ export function SyncButtons() {
         }
 
         setMessage(message);
+
+        notifyClientMatchReviews();
 
         if (created > 0 || !silent) {
           router.refresh();

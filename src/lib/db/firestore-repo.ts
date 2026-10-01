@@ -34,6 +34,8 @@ import type {
   TrashedProject,
   Visit,
   VisitSource,
+  ClientMatchReason,
+  ClientMatchReview,
 } from "@/lib/crm/types";
 import {
   CLOSED_STAGE_NAME,
@@ -88,6 +90,32 @@ function mapClient(id: string, data: DocumentData): Client {
     deletedAt: data.deletedAt ? toDate(data.deletedAt) : null,
     createdAt: toDate(data.createdAt),
     updatedAt: toDate(data.updatedAt),
+  };
+}
+
+function mapClientMatchReview(
+  id: string,
+  data: DocumentData,
+): ClientMatchReview {
+  const reason = data.reason;
+  const status = data.status;
+  return {
+    id,
+    newClientId: String(data.newClientId ?? ""),
+    existingClientId: String(data.existingClientId ?? ""),
+    projectId: data.projectId ? String(data.projectId) : null,
+    reason:
+      reason === "email" || reason === "phone" || reason === "email_and_phone"
+        ? reason
+        : "phone",
+    status:
+      status === "merged" ||
+      status === "kept_independent" ||
+      status === "pending"
+        ? status
+        : "pending",
+    createdAt: toDate(data.createdAt),
+    resolvedAt: data.resolvedAt ? toDate(data.resolvedAt) : null,
   };
 }
 
@@ -488,7 +516,7 @@ export async function nextLeadCode(): Promise<string> {
   return buildEntityCode("C", value);
 }
 
-export async function upsertClient(input: {
+export async function createClientRecord(input: {
   firstName: string;
   lastName: string;
   email?: string | null;
@@ -498,66 +526,6 @@ export async function upsertClient(input: {
   const db = getAdminDb();
   const email = input.email?.trim().toLowerCase() || null;
   const phone = input.phone?.trim() || null;
-
-  if (email) {
-    const existing = await db
-      .collection("clients")
-      .where("email", "==", email)
-      .limit(5)
-      .get();
-    const match = existing.docs.find((d) => !d.data().deletedAt);
-    if (match) {
-      const doc = match;
-      const data = doc.data();
-      const leadCode =
-        data.leadCode && !String(data.leadCode).startsWith("TMP-")
-          ? normalizeClientCode(String(data.leadCode))
-          : await nextLeadCode();
-      await doc.ref.update(
-        stripUndefined({
-          leadCode,
-          firstName: preferPersonName(input.firstName, data.firstName),
-          lastName: preferPersonName(input.lastName, data.lastName || ""),
-          phone: phone || data.phone || null,
-          address: input.address || data.address || null,
-          updatedAt: new Date(),
-        }),
-      );
-      const fresh = await doc.ref.get();
-      return mapClient(fresh.id, fresh.data()!);
-    }
-  }
-
-  if (phone) {
-    const existing = await db
-      .collection("clients")
-      .where("phone", "==", phone)
-      .limit(5)
-      .get();
-    const match = existing.docs.find((d) => !d.data().deletedAt);
-    if (match) {
-      const doc = match;
-      const data = doc.data();
-      const leadCode =
-        data.leadCode && !String(data.leadCode).startsWith("TMP-")
-          ? normalizeClientCode(String(data.leadCode))
-          : await nextLeadCode();
-      await doc.ref.update(
-        stripUndefined({
-          leadCode,
-          firstName: preferPersonName(input.firstName, data.firstName),
-          lastName: preferPersonName(input.lastName, data.lastName || ""),
-          email: email || data.email || null,
-          phone: phone || data.phone || null,
-          address: input.address || data.address || null,
-          updatedAt: new Date(),
-        }),
-      );
-      const fresh = await doc.ref.get();
-      return mapClient(fresh.id, fresh.data()!);
-    }
-  }
-
   const id = createId("cli");
   const now = new Date();
   const leadCode = await nextLeadCode();
@@ -576,6 +544,94 @@ export async function upsertClient(input: {
   };
   await db.collection("clients").doc(id).set(payload);
   return mapClient(id, payload);
+}
+
+/** Ya no fusiona por email/teléfono: siempre crea una ficha nueva. */
+export async function upsertClient(input: {
+  firstName: string;
+  lastName: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+}): Promise<Client> {
+  return createClientRecord(input);
+}
+
+export async function listClientMatchReviews(): Promise<ClientMatchReview[]> {
+  const docs = await readCollection("clientMatchReviews");
+  return docs
+    .map((doc) => mapClientMatchReview(doc.id, doc.data))
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+}
+
+export async function getClientMatchReviewById(
+  id: string,
+): Promise<ClientMatchReview | null> {
+  const snap = await getAdminDb()
+    .collection("clientMatchReviews")
+    .doc(id)
+    .get();
+  if (!snap.exists) return null;
+  return mapClientMatchReview(snap.id, snap.data()!);
+}
+
+export async function createClientMatchReview(input: {
+  newClientId: string;
+  existingClientId: string;
+  projectId?: string | null;
+  reason: ClientMatchReason;
+}): Promise<ClientMatchReview> {
+  const id = createId("cmr");
+  const now = new Date();
+  const payload = {
+    newClientId: input.newClientId,
+    existingClientId: input.existingClientId,
+    projectId: input.projectId ?? null,
+    reason: input.reason,
+    status: "pending" as const,
+    createdAt: now,
+    resolvedAt: null,
+  };
+  await getAdminDb().collection("clientMatchReviews").doc(id).set(payload);
+  return mapClientMatchReview(id, payload);
+}
+
+export async function updateClientMatchReview(
+  id: string,
+  data: Partial<Pick<ClientMatchReview, "status" | "resolvedAt">>,
+): Promise<ClientMatchReview> {
+  const ref = getAdminDb().collection("clientMatchReviews").doc(id);
+  const existing = await ref.get();
+  if (!existing.exists) {
+    throw new Error("Match review not found");
+  }
+  await ref.update(
+    stripUndefined({
+      status: data.status,
+      resolvedAt: data.resolvedAt,
+    }),
+  );
+  const fresh = await ref.get();
+  return mapClientMatchReview(fresh.id, fresh.data()!);
+}
+
+async function deleteMatchReviewsForClient(clientId: string): Promise<void> {
+  const db = getAdminDb();
+  const col = db.collection("clientMatchReviews");
+  const [asNew, asExisting] = await Promise.all([
+    col.where("newClientId", "==", clientId).get(),
+    col.where("existingClientId", "==", clientId).get(),
+  ]);
+  const seen = new Set<string>();
+  const batch = db.batch();
+  for (const doc of [...asNew.docs, ...asExisting.docs]) {
+    if (seen.has(doc.id)) continue;
+    seen.add(doc.id);
+    batch.delete(doc.ref);
+  }
+  if (seen.size > 0) {
+    await batch.commit();
+  }
 }
 
 export async function updateClient(
@@ -772,6 +828,7 @@ export async function deleteClient(id: string): Promise<void> {
   if (stillHas) {
     throw new Error("Client still has projects");
   }
+  await deleteMatchReviewsForClient(id);
   await db.collection("clients").doc(id).delete();
 }
 
@@ -892,6 +949,7 @@ export async function hardDeleteProject(id: string): Promise<void> {
 }
 
 export async function hardDeleteClient(id: string): Promise<void> {
+  await deleteMatchReviewsForClient(id);
   await getAdminDb().collection("clients").doc(id).delete();
 }
 

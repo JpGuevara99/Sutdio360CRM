@@ -1,4 +1,5 @@
 import { Sidebar } from "@/components/crm/Sidebar";
+import { ClientMatchReviewHost } from "@/components/crm/ClientMatchReviewHost";
 import { requirePageSession } from "@/lib/auth/require-page-session";
 import { getDriveRootFolderId } from "@/lib/google/auth";
 
@@ -22,6 +23,7 @@ export default async function CrmLayout({
       <div className="crm-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {children}
       </div>
+      <ClientMatchReviewHost />
     </div>
   );
 }

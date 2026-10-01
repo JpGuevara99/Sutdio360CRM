@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import type { VisitSource } from "@/lib/crm/types";
 import { ensureProjectDriveFolder } from "@/lib/crm/drive-sync";
-import { upsertClient } from "@/lib/crm/upsert-client";
+import { queueClientMatchReviews } from "@/lib/crm/client-match";
+import { createIndependentClient } from "@/lib/crm/upsert-client";
 
 export type ManualLeadInput = {
   firstName: string;
@@ -17,7 +18,7 @@ export type ManualLeadInput = {
 };
 
 export async function createManualLead(input: ManualLeadInput) {
-  const client = await upsertClient({
+  const client = await createIndependentClient({
     firstName: input.firstName,
     lastName: input.lastName,
     email: input.email,
@@ -57,5 +58,15 @@ export async function createManualLead(input: ManualLeadInput) {
   if (!full) {
     throw new Error("No se pudo cargar el proyecto creado");
   }
+
+  try {
+    await queueClientMatchReviews({
+      client,
+      projectId: project.id,
+    });
+  } catch (error) {
+    console.error("createManualLead: client match review failed", error);
+  }
+
   return full;
 }

@@ -32,6 +32,8 @@ import type {
   TrashedProject,
   Visit,
   VisitSource,
+  ClientMatchReason,
+  ClientMatchReview,
 } from "@/lib/crm/types";
 import {
   CLOSED_STAGE_NAME,
@@ -55,6 +57,7 @@ import { quoteCostsFromLines } from "@/lib/crm/quote-summary";
 
 type StoreShape = {
   clients: Client[];
+  clientMatchReviews: ClientMatchReview[];
   projects: Project[];
   visits: Visit[];
   files: FileRef[];
@@ -99,6 +102,7 @@ const globalStore = globalThis as unknown as {
 function emptyStore(): StoreShape {
   return {
     clients: [],
+    clientMatchReviews: [],
     projects: [],
     visits: [],
     files: [],
@@ -132,6 +136,11 @@ async function load(): Promise<StoreShape> {
       deletedAt: c.deletedAt ? new Date(c.deletedAt) : null,
       createdAt: new Date(c.createdAt),
       updatedAt: new Date(c.updatedAt),
+    }));
+    parsed.clientMatchReviews = (parsed.clientMatchReviews ?? []).map((r) => ({
+      ...r,
+      createdAt: new Date(r.createdAt),
+      resolvedAt: r.resolvedAt ? new Date(r.resolvedAt) : null,
     }));
     if (parsed.leadCodeValue == null) parsed.leadCodeValue = 0;
     parsed.stages = (parsed.stages ?? []).map((s) => ({
@@ -313,7 +322,7 @@ export async function nextLeadCode(): Promise<string> {
   return buildEntityCode("C", store.leadCodeValue);
 }
 
-export async function upsertClient(input: {
+export async function createClientRecord(input: {
   firstName: string;
   lastName: string;
   email?: string | null;
@@ -323,29 +332,6 @@ export async function upsertClient(input: {
   const store = await load();
   const email = input.email?.trim().toLowerCase() || null;
   const phone = input.phone?.trim() || null;
-  const active = store.clients.filter((c) => !c.deletedAt);
-  const existing =
-    (email && active.find((c) => c.email === email)) ||
-    (phone && active.find((c) => c.phone === phone)) ||
-    null;
-
-  if (existing) {
-    existing.firstName = preferPersonName(input.firstName, existing.firstName);
-    existing.lastName = preferPersonName(
-      input.lastName,
-      existing.lastName || "",
-    );
-    existing.phone = phone || existing.phone;
-    existing.email = email || existing.email;
-    existing.address = input.address || existing.address;
-    if (!existing.leadCode || existing.leadCode.startsWith("TMP-")) {
-      existing.leadCode = await nextLeadCode();
-    }
-    existing.updatedAt = new Date();
-    await save(store);
-    return existing;
-  }
-
   const client: Client = {
     id: createId("cli"),
     leadCode: await nextLeadCode(),
@@ -363,6 +349,78 @@ export async function upsertClient(input: {
   store.clients.push(client);
   await save(store);
   return client;
+}
+
+/** Ya no fusiona por email/teléfono: siempre crea una ficha nueva. */
+export async function upsertClient(input: {
+  firstName: string;
+  lastName: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+}): Promise<Client> {
+  return createClientRecord(input);
+}
+
+function matchReviews(store: StoreShape): ClientMatchReview[] {
+  if (!store.clientMatchReviews) store.clientMatchReviews = [];
+  return store.clientMatchReviews;
+}
+
+export async function listClientMatchReviews(): Promise<ClientMatchReview[]> {
+  const store = await load();
+  return [...matchReviews(store)].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+}
+
+export async function getClientMatchReviewById(
+  id: string,
+): Promise<ClientMatchReview | null> {
+  const store = await load();
+  return matchReviews(store).find((review) => review.id === id) ?? null;
+}
+
+export async function createClientMatchReview(input: {
+  newClientId: string;
+  existingClientId: string;
+  projectId?: string | null;
+  reason: ClientMatchReason;
+}): Promise<ClientMatchReview> {
+  const store = await load();
+  const review: ClientMatchReview = {
+    id: createId("cmr"),
+    newClientId: input.newClientId,
+    existingClientId: input.existingClientId,
+    projectId: input.projectId ?? null,
+    reason: input.reason,
+    status: "pending",
+    createdAt: new Date(),
+    resolvedAt: null,
+  };
+  matchReviews(store).push(review);
+  await save(store);
+  return review;
+}
+
+export async function updateClientMatchReview(
+  id: string,
+  data: Partial<Pick<ClientMatchReview, "status" | "resolvedAt">>,
+): Promise<ClientMatchReview> {
+  const store = await load();
+  const review = matchReviews(store).find((item) => item.id === id);
+  if (!review) throw new Error("Match review not found");
+  if (data.status !== undefined) review.status = data.status;
+  if (data.resolvedAt !== undefined) review.resolvedAt = data.resolvedAt;
+  await save(store);
+  return review;
+}
+
+function removeMatchReviewsForClient(store: StoreShape, clientId: string) {
+  store.clientMatchReviews = matchReviews(store).filter(
+    (review) =>
+      review.newClientId !== clientId && review.existingClientId !== clientId,
+  );
 }
 
 export async function updateClient(
@@ -528,6 +586,7 @@ export async function deleteClient(id: string): Promise<void> {
     throw new Error("Client still has projects");
   }
   store.clients = store.clients.filter((c) => c.id !== id);
+  removeMatchReviewsForClient(store, id);
   await save(store);
 }
 
@@ -624,6 +683,7 @@ export async function hardDeleteProject(id: string): Promise<void> {
 export async function hardDeleteClient(id: string): Promise<void> {
   const store = await load();
   store.clients = store.clients.filter((c) => c.id !== id);
+  removeMatchReviewsForClient(store, id);
   await save(store);
 }
 

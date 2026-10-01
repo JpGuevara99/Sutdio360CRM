@@ -336,6 +336,30 @@ export type ClientWithProjects = Client & {
   projectCount: number;
 };
 
+export type ClientMatchReason = "email" | "phone" | "email_and_phone";
+
+export type ClientMatchReviewStatus =
+  | "pending"
+  | "merged"
+  | "kept_independent";
+
+/** Coincidencia de correo/teléfono pendiente de que el usuario decida. */
+export type ClientMatchReview = {
+  id: string;
+  newClientId: string;
+  existingClientId: string;
+  projectId: string | null;
+  reason: ClientMatchReason;
+  status: ClientMatchReviewStatus;
+  createdAt: Date;
+  resolvedAt: Date | null;
+};
+
+export type ClientMatchReviewWithClients = ClientMatchReview & {
+  newClient: Client;
+  existingClient: Client;
+};
+
 /** Proyecto en la papelera, con su cliente para mostrarlo en la lista */
 export type TrashedProject = Project & {
   client: Client | null;

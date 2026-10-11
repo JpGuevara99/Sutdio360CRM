@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ClientMatchReviewModal } from "@/components/crm/ClientMatchReviewModal";
 import type { ClientMatchReviewWithClients } from "@/lib/crm/types";
 
@@ -14,7 +14,6 @@ export function notifyClientMatchReviews() {
 
 export function ClientMatchReviewHost() {
   const router = useRouter();
-  const pathname = usePathname();
   const [reviews, setReviews] = useState<ClientMatchReviewWithClients[]>([]);
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -34,21 +33,22 @@ export function ClientMatchReviewHost() {
   }, []);
 
   useEffect(() => {
+    // Fetch once when the shared CRM host mounts; refreshes then follow app events.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-    const interval = window.setInterval(() => {
-      void load();
-    }, 45_000);
     const onEvent = () => {
       void load();
     };
-    window.addEventListener(CLIENT_MATCH_EVENT, onEvent);
-    document.addEventListener("visibilitychange", onEvent);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener(CLIENT_MATCH_EVENT, onEvent);
-      document.removeEventListener("visibilitychange", onEvent);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void load();
     };
-  }, [load, pathname]);
+    window.addEventListener(CLIENT_MATCH_EVENT, onEvent);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener(CLIENT_MATCH_EVENT, onEvent);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [load]);
 
   const visible = reviews.filter((review) => !skipped.has(review.id));
   const current = visible[0] ?? null;
@@ -70,7 +70,6 @@ export function ClientMatchReviewHost() {
       }
       setReviews((prev) => prev.filter((review) => review.id !== current.id));
       router.refresh();
-      void load();
     } catch {
       setError("No se pudo guardar la decisión");
     } finally {

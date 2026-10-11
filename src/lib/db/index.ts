@@ -11,6 +11,76 @@ function getRepo(): Repo {
 
 const READ_PREFIXES = ["list", "get", "count", "find", "search", "is", "has"];
 
+const CACHE_KEYS_BY_WRITE: Record<string, readonly string[]> = {
+  createProjectExpense: ["collection:projectExpenses"],
+  updateProjectExpense: ["collection:projectExpenses"],
+  deleteProjectExpense: ["collection:projectExpenses"],
+  createClientRecord: ["collection:clients"],
+  upsertClient: ["collection:clients"],
+  updateClient: ["collection:clients"],
+  promoteTemporaryLeadCode: ["collection:clients"],
+  setClientLeadCode: ["collection:clients"],
+  deleteClient: ["collection:clients", "collection:clientMatchReviews"],
+  setClientTrashed: ["collection:clients"],
+  createClientMatchReview: ["collection:clientMatchReviews"],
+  updateClientMatchReview: ["collection:clientMatchReviews"],
+  createProject: ["collection:projects"],
+  updateProject: ["collection:projects"],
+  setProjectTrashed: ["collection:projects"],
+  setProjectPublicCode: ["collection:projects"],
+  reorderProjectsInStage: ["collection:projects"],
+  createVisit: ["collection:visits"],
+  updateVisit: ["collection:visits"],
+  updateVisitNotes: ["collection:visits"],
+  hardDeleteProject: [
+    "collection:projects",
+    "collection:quotes",
+    "collection:quoteLines",
+    "collection:projectExpenses",
+    "collection:visits",
+  ],
+  hardDeleteClient: [
+    "collection:clients",
+    "collection:clientMatchReviews",
+  ],
+  createPipelineStage: ["collection:pipelineStages"],
+  updatePipelineStage: ["collection:pipelineStages", "collection:projects"],
+  deletePipelineStage: ["collection:pipelineStages", "collection:projects"],
+  reorderPipelineStages: ["collection:pipelineStages"],
+  createMaterialCategory: ["collection:materialCategories"],
+  updateMaterialCategory: ["collection:materialCategories"],
+  deleteMaterialCategory: [
+    "collection:materialCategories",
+    "collection:materials",
+  ],
+  createMaterial: ["collection:materials"],
+  createMaterials: ["collection:materials"],
+  updateMaterial: ["collection:materials"],
+  deleteMaterial: ["collection:materials"],
+  deleteAllMaterials: ["collection:materials"],
+  createQuote: ["collection:quotes"],
+  setQuoteCosts: ["collection:quotes"],
+  updateQuote: ["collection:quotes"],
+  deleteQuote: ["collection:quotes", "collection:quoteLines"],
+  addQuoteLines: ["collection:quotes", "collection:quoteLines"],
+  updateQuoteLine: ["collection:quotes", "collection:quoteLines"],
+  deleteQuoteLine: ["collection:quotes", "collection:quoteLines"],
+  cloneQuoteToProject: ["collection:quotes", "collection:quoteLines"],
+  // These writes affect only documents that are not cached here.
+  upsertStaffUser: [],
+  nextPublicCode: [],
+  nextLeadCode: [],
+  setCodeSequences: [],
+  createProjectNote: [],
+  updateProjectNote: [],
+  deleteProjectNote: [],
+  createAuditLog: [],
+  createFileRef: [],
+  updateCompanySettings: [],
+  updateFollowUpSettings: [],
+  setCalendarSyncToken: [],
+};
+
 function isReadOperation(name: string): boolean {
   return READ_PREFIXES.some(
     (prefix) =>
@@ -18,6 +88,16 @@ function isReadOperation(name: string): boolean {
       name.length > prefix.length &&
       name[prefix.length] === name[prefix.length].toUpperCase(),
   );
+}
+
+function invalidateForWrite(name: string): void {
+  const keys = CACHE_KEYS_BY_WRITE[name];
+  if (keys === undefined) {
+    // Unknown writes retain the conservative behavior until their effects are mapped.
+    invalidateQueryCache();
+  } else if (keys.length > 0) {
+    invalidateQueryCache(...keys);
+  }
 }
 
 export const db: Repo = new Proxy({} as Repo, {
@@ -29,14 +109,13 @@ export const db: Repo = new Proxy({} as Repo, {
     const bound = value.bind(repo);
     if (typeof prop !== "string" || isReadOperation(prop)) return bound;
 
-    // Toda operación de escritura invalida la caché de lecturas para que la
-    // siguiente pantalla no muestre datos viejos.
+    // Las escrituras invalidan solo las colecciones que pueden haber cambiado.
     return (...args: unknown[]) => {
       const result = bound(...args);
       if (result instanceof Promise) {
-        return result.finally(() => invalidateQueryCache());
+        return result.finally(() => invalidateForWrite(prop));
       }
-      invalidateQueryCache();
+      invalidateForWrite(prop);
       return result;
     };
   },

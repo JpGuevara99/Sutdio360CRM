@@ -60,6 +60,8 @@ import { cachedRead, invalidateQueryCache } from "@/lib/db/query-cache";
 
 type CachedDoc = { id: string; data: DocumentData };
 
+const staffUpsertsInFlight = new Map<string, Promise<StaffUser>>();
+
 /**
  * Lee una colección completa a través de la caché. Firestore cobra una lectura
  * por documento, así que estas consultas son las más caras de la app.
@@ -564,6 +566,18 @@ export async function listClientMatchReviews(): Promise<ClientMatchReview[]> {
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
 
+export async function listPendingClientMatchReviews(): Promise<
+  ClientMatchReview[]
+> {
+  const snap = await getAdminDb()
+    .collection("clientMatchReviews")
+    .where("status", "==", "pending")
+    .get();
+  return snap.docs
+    .map((doc) => mapClientMatchReview(doc.id, doc.data()))
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+}
+
 export async function getClientMatchReviewById(
   id: string,
 ): Promise<ClientMatchReview | null> {
@@ -1064,25 +1078,19 @@ export async function updateProject(
 export async function getProjectById(
   id: string,
 ): Promise<ProjectWithRelations | null> {
-  // Proyecto, cliente y visitas salen de las colecciones cacheadas; solo
-  // archivos y notas necesitan consulta propia.
-  const [projectDocs, clientDocs, visitDocs] = await Promise.all([
-    readCollection("projects"),
-    readCollection("clients"),
-    readCollection("visits"),
+  const projectSnap = await getAdminDb().collection("projects").doc(id).get();
+  if (!projectSnap.exists) return null;
+  const project = mapProject(projectSnap.id, projectSnap.data()!);
+
+  const [clientSnap, visitSnap] = await Promise.all([
+    getAdminDb().collection("clients").doc(project.clientId).get(),
+    getAdminDb().collection("visits").where("projectId", "==", id).get(),
   ]);
+  if (!clientSnap.exists) return null;
+  const client = mapClient(clientSnap.id, clientSnap.data()!);
 
-  const projectDoc = projectDocs.find((doc) => doc.id === id);
-  if (!projectDoc) return null;
-  const project = mapProject(projectDoc.id, projectDoc.data);
-
-  const clientDoc = clientDocs.find((doc) => doc.id === project.clientId);
-  if (!clientDoc) return null;
-  const client = mapClient(clientDoc.id, clientDoc.data);
-
-  const visits = visitDocs
-    .filter((doc) => doc.data.projectId === id)
-    .map((doc) => mapVisit(doc.id, doc.data))
+  const visits = visitSnap.docs
+    .map((doc) => mapVisit(doc.id, doc.data()))
     .sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime());
 
   const [files, projectNotes] = await Promise.all([
@@ -1331,7 +1339,26 @@ export async function setCalendarSyncToken(syncToken: string): Promise<void> {
     .set({ syncToken, updatedAt: new Date() }, { merge: true });
 }
 
-export async function upsertStaffUser(input: {
+export function upsertStaffUser(input: {
+  firebaseUid: string;
+  email: string;
+  displayName?: string | null;
+}): Promise<StaffUser> {
+  const existing = staffUpsertsInFlight.get(input.firebaseUid);
+  if (existing) return existing;
+
+  const request = Promise.resolve()
+    .then(() => persistStaffUser(input))
+    .finally(() => {
+      if (staffUpsertsInFlight.get(input.firebaseUid) === request) {
+        staffUpsertsInFlight.delete(input.firebaseUid);
+      }
+    });
+  staffUpsertsInFlight.set(input.firebaseUid, request);
+  return request;
+}
+
+async function persistStaffUser(input: {
   firebaseUid: string;
   email: string;
   displayName?: string | null;
@@ -1883,10 +1910,12 @@ function mapQuoteLine(id: string, data: DocumentData): QuoteLine {
 export async function listQuotesByProject(
   projectId: string,
 ): Promise<Quote[]> {
-  const docs = await readCollection("quotes");
-  return docs
-    .map((d) => mapQuote(d.id, d.data))
-    .filter((quote) => quote.projectId === projectId)
+  const snap = await getAdminDb()
+    .collection("quotes")
+    .where("projectId", "==", projectId)
+    .get();
+  return snap.docs
+    .map((doc) => mapQuote(doc.id, doc.data()))
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 }
 

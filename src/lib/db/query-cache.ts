@@ -1,15 +1,14 @@
 /**
  * Caché en memoria para lecturas de colecciones completas de Firestore.
  *
- * El plan Spark cuenta una lectura por documento devuelto, así que abrir dos
- * veces la misma pantalla cuesta el doble sin necesidad. Guardamos la promesa
- * (no el resultado) para que varias llamadas simultáneas compartan una sola
- * consulta, y se invalida por completo en cuanto la app escribe algo.
+ * El plan Spark cuenta una lectura por documento devuelto. Guardamos la promesa
+ * para que llamadas simultáneas y lecturas repetidas en este proceso compartan
+ * una consulta; las escrituras invalidan las claves de los datos modificados.
  *
  * TTL configurable con CRM_DB_CACHE_TTL_MS (0 desactiva la caché).
  */
 
-const DEFAULT_TTL_MS = 30_000;
+const DEFAULT_TTL_MS = 180_000;
 
 type Entry = { expiresAt: number; promise: Promise<unknown> };
 
@@ -39,7 +38,10 @@ export function cachedRead<T>(key: string, loader: () => Promise<T>): Promise<T>
 }
 
 /** Vacía la caché (una clave concreta o todas). */
-export function invalidateQueryCache(key?: string): void {
-  if (key) entries.delete(key);
-  else entries.clear();
+export function invalidateQueryCache(...keys: string[]): void {
+  if (keys.length === 0) {
+    entries.clear();
+    return;
+  }
+  for (const key of keys) entries.delete(key);
 }

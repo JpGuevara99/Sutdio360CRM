@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { formatInTimeZone } from "date-fns-tz";
 import { StatusBadge } from "@/components/crm/StatusBadge";
 import { SyncButtons } from "@/components/crm/SyncButtons";
@@ -34,6 +34,10 @@ function todayInputValue(): string {
   return formatInTimeZone(new Date(), TZ, "yyyy-MM-dd");
 }
 
+function rangeInputValue(value: string | null, fallback: () => string): string {
+  return value ? formatInTimeZone(new Date(value), TZ, "yyyy-MM-dd") : fallback();
+}
+
 function daysAgoInputValue(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -47,8 +51,12 @@ export function DashboardClient({
   usingFirestore: boolean;
   initial: DashboardPayload;
 }) {
-  const [from, setFrom] = useState(daysAgoInputValue(90));
-  const [to, setTo] = useState(todayInputValue());
+  const [from, setFrom] = useState(() =>
+    rangeInputValue(initial.metrics.range.from, () => daysAgoInputValue(90)),
+  );
+  const [to, setTo] = useState(() =>
+    rangeInputValue(initial.metrics.range.to, todayInputValue),
+  );
   const [segment, setSegment] = useState<DashboardSegment | "ALL">("ALL");
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
@@ -57,7 +65,7 @@ export function DashboardClient({
   const [error, setError] = useState<string | null>(null);
   const [listSegment, setListSegment] = useState<DashboardSegment>("SENT");
 
-  const load = useCallback(async () => {
+  async function load() {
     setLoading(true);
     setError(null);
     try {
@@ -79,11 +87,7 @@ export function DashboardClient({
     } finally {
       setLoading(false);
     }
-  }, [from, to, segment, amountMin, amountMax]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  }
 
   const metrics = data.metrics;
   const listItems = metrics.segments[listSegment].items;

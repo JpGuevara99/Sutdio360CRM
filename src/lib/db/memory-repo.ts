@@ -374,6 +374,13 @@ export async function listClientMatchReviews(): Promise<ClientMatchReview[]> {
   );
 }
 
+export async function listPendingClientMatchReviews(): Promise<
+  ClientMatchReview[]
+> {
+  const reviews = await listClientMatchReviews();
+  return reviews.filter((review) => review.status === "pending");
+}
+
 export async function getClientMatchReviewById(
   id: string,
 ): Promise<ClientMatchReview | null> {

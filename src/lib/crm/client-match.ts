@@ -96,13 +96,27 @@ export async function queueClientMatchReviews(input: {
 export async function listPendingClientMatchReviews(): Promise<
   ClientMatchReviewWithClients[]
 > {
-  const reviews = await db.listClientMatchReviews();
-  const pending = reviews.filter((review) => review.status === "pending");
+  const pending = await db.listPendingClientMatchReviews();
+  const clientIds = [
+    ...new Set(
+      pending.flatMap((review) => [
+        review.newClientId,
+        review.existingClientId,
+      ]),
+    ),
+  ];
+  const clients = await Promise.all(
+    clientIds.map((id) => db.getClientById(id)),
+  );
+  const clientsById = new Map<string, Client>();
+  for (const client of clients) {
+    if (client) clientsById.set(client.id, client);
+  }
   const out: ClientMatchReviewWithClients[] = [];
 
   for (const review of pending) {
-    const newClient = await db.getClientById(review.newClientId);
-    const existingClient = await db.getClientById(review.existingClientId);
+    const newClient = clientsById.get(review.newClientId);
+    const existingClient = clientsById.get(review.existingClientId);
     if (
       !newClient ||
       newClient.deletedAt ||

@@ -3,9 +3,8 @@ import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { TopBar } from "@/components/crm/TopBar";
 import { PageBody } from "@/components/crm/PageBody";
 import { ProjectExpensesClient } from "@/components/crm/ProjectExpensesClient";
-import { buildExpenseDashboard } from "@/lib/crm/project-expense-metrics";
+import { loadProjectExpenseDashboard } from "@/lib/crm/load-project-expense-dashboard";
 import { requirePageSession } from "@/lib/auth/require-page-session";
-import { db } from "@/lib/db";
 
 const TZ = "America/Santiago";
 
@@ -19,14 +18,7 @@ export default async function ProjectExpensesPage() {
   const rangeFrom = fromZonedTime(startOfDay(yearStart), TZ);
   const rangeTo = fromZonedTime(endOfDay(zonedNow), TZ);
 
-  const [projects, expenses] = await Promise.all([
-    db.listProjects(),
-    db.listAllProjectExpenses(),
-  ]);
-
-  const dashboard = buildExpenseDashboard({
-    projects,
-    expenses,
+  const dashboard = await loadProjectExpenseDashboard({
     from: rangeFrom,
     to: rangeTo,
     granularity: "month",

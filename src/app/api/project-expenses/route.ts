@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { endOfDay, startOfDay } from "date-fns";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { getSessionFromRequest } from "@/lib/auth/session";
-import {
-  buildExpenseDashboard,
-  type ExpenseGranularity,
-} from "@/lib/crm/project-expense-metrics";
-import { db } from "@/lib/db";
+import type { ExpenseGranularity } from "@/lib/crm/project-expense-metrics";
+import { loadProjectExpenseDashboard } from "@/lib/crm/load-project-expense-dashboard";
 
 const TZ = "America/Santiago";
 
@@ -41,14 +38,7 @@ export async function GET(request: Request) {
   const query = searchParams.get("q") ?? "";
   const granularity = parseGranularity(searchParams.get("granularity"));
 
-  const [projects, expenses] = await Promise.all([
-    db.listProjects(),
-    db.listAllProjectExpenses(),
-  ]);
-
-  const dashboard = buildExpenseDashboard({
-    projects,
-    expenses,
+  const dashboard = await loadProjectExpenseDashboard({
     from,
     to,
     query,

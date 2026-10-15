@@ -129,7 +129,7 @@ export type ProjectExpenseCategory =
   | "SUBCONTRATOS"
   | "OTROS";
 
-/** Gasto real registrado sobre un proyecto ya concretado */
+/** Gasto real registrado sobre un proyecto elegible para seguimiento */
 export type ProjectExpense = {
   id: string;
   projectId: string;

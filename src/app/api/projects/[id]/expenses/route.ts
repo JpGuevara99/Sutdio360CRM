@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth/session";
-import { serializeExpense } from "@/lib/crm/project-expense-metrics";
+import {
+  canTrackExecutionProjectExpenses,
+  serializeExpense,
+} from "@/lib/crm/project-expense-metrics";
 import { db } from "@/lib/db";
 
 const createSchema = z.object({
@@ -58,9 +61,26 @@ export async function POST(
   if (!project) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  if (project.closingOutcome !== "APROBADO" || !project.closedAt) {
+  const isClosedAndApproved =
+    project.closingOutcome === "APROBADO" && project.closedAt != null;
+  let isExecutionWithApprovedBudget = false;
+  if (!isClosedAndApproved) {
+    const [stages, quotes] = await Promise.all([
+      db.listPipelineStages(),
+      db.listQuotesByProject(id),
+    ]);
+    isExecutionWithApprovedBudget = canTrackExecutionProjectExpenses({
+      project,
+      stages,
+      quotes,
+    });
+  }
+  if (!isClosedAndApproved && !isExecutionWithApprovedBudget) {
     return NextResponse.json(
-      { error: "Solo se registran gastos en proyectos concretados" },
+      {
+        error:
+          "Solo se registran gastos en proyectos aprobados o en ejecución con presupuesto aprobado",
+      },
       { status: 400 },
     );
   }

@@ -6,6 +6,8 @@ import type {
   Project,
   ProjectExpense,
   ProjectExpenseCategory,
+  PipelineStage,
+  Quote,
 } from "@/lib/crm/types";
 
 const TZ = "America/Santiago";
@@ -13,6 +15,7 @@ const TZ = "America/Santiago";
 export type ExpenseGranularity = "day" | "week" | "month";
 
 export type ExpenseProjectRow = {
+  kind: "closed";
   projectId: string;
   publicCode: string;
   clientName: string;
@@ -21,6 +24,18 @@ export type ExpenseProjectRow = {
   closedAmount: number;
   totalExpenses: number;
   netAmount: number;
+  expenseCount: number;
+};
+
+export type ExecutionExpenseProjectRow = {
+  kind: "execution";
+  projectId: string;
+  publicCode: string;
+  clientName: string;
+  title: string | null;
+  approvedBudget: number;
+  totalExpenses: number;
+  remainingBudget: number;
   expenseCount: number;
 };
 
@@ -37,6 +52,9 @@ export type ExpenseDashboard = {
   expenseAmount: number;
   result: number;
   rows: ExpenseProjectRow[];
+  executionProjectCount: number;
+  executionExpenseAmount: number;
+  executionRows: ExecutionExpenseProjectRow[];
   buckets: ExpensePeriodBucket[];
   expensesByProject: Record<string, SerializedExpense[]>;
 };
@@ -57,6 +75,40 @@ export function isConcretedProject(project: Project): boolean {
     project.closingOutcome === "APROBADO" &&
     project.closedAt != null &&
     !project.deletedAt
+  );
+}
+
+function normalizeStageName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+export function isExecutionStageName(name: string): boolean {
+  return normalizeStageName(name) === "en ejecucion";
+}
+
+export function canTrackExecutionProjectExpenses(input: {
+  project: Project;
+  stages: PipelineStage[];
+  quotes: Quote[];
+}): boolean {
+  const executionStage = input.stages.find((stage) =>
+    isExecutionStageName(stage.name),
+  );
+  return Boolean(
+    executionStage &&
+      input.project.stageId === executionStage.id &&
+      input.project.closedAt == null &&
+      input.project.closingOutcome == null &&
+      !input.project.deletedAt &&
+      input.quotes.some(
+        (quote) =>
+          quote.projectId === input.project.id &&
+          quote.commercialStatus === "ACCEPTED",
+      ),
   );
 }
 
@@ -100,6 +152,8 @@ export function serializeExpense(expense: ProjectExpense): SerializedExpense {
 export function buildExpenseDashboard(input: {
   projects: Array<Project & { client: Client }>;
   expenses: ProjectExpense[];
+  executionProjects?: Array<Project & { client: Client }>;
+  approvedBudgetByProject?: Map<string, number>;
   from: Date | null;
   to: Date | null;
   query?: string;
@@ -127,6 +181,7 @@ export function buildExpenseDashboard(input: {
       const totalExpenses = list.reduce((sum, item) => sum + item.amount, 0);
       const closedAmount = project.closedAmount ?? 0;
       return {
+        kind: "closed" as const,
         projectId: project.id,
         publicCode: project.publicCode,
         clientName: clientFullName(project.client),
@@ -145,13 +200,48 @@ export function buildExpenseDashboard(input: {
     })
     .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
 
-  const visibleIds = new Set(rows.map((row) => row.projectId));
+  const executionRows: ExecutionExpenseProjectRow[] = (
+    input.executionProjects ?? []
+  )
+    .map((project) => {
+      const list = expensesByProject.get(project.id) ?? [];
+      const totalExpenses = list.reduce((sum, item) => sum + item.amount, 0);
+      const approvedBudget =
+        input.approvedBudgetByProject?.get(project.id) ?? 0;
+      return {
+        kind: "execution" as const,
+        projectId: project.id,
+        publicCode: project.publicCode,
+        clientName: clientFullName(project.client),
+        title: project.title,
+        approvedBudget,
+        totalExpenses,
+        remainingBudget: approvedBudget - totalExpenses,
+        expenseCount: list.length,
+      };
+    })
+    .filter((row) => {
+      if (!q) return true;
+      const hay =
+        `${formatEntityCode(row.publicCode)} ${row.publicCode} ${row.clientName} ${row.title ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    })
+    .sort((a, b) => a.publicCode.localeCompare(b.publicCode));
+
+  const visibleIds = new Set([
+    ...rows.map((row) => row.projectId),
+    ...executionRows.map((row) => row.projectId),
+  ]);
   const visibleExpenses = expensesInRange.filter((expense) =>
     visibleIds.has(expense.projectId),
   );
 
   const originalAmount = rows.reduce((sum, row) => sum + row.closedAmount, 0);
   const expenseAmount = rows.reduce((sum, row) => sum + row.totalExpenses, 0);
+  const executionExpenseAmount = executionRows.reduce(
+    (sum, row) => sum + row.totalExpenses,
+    0,
+  );
 
   const bucketMap = new Map<string, ExpensePeriodBucket>();
   for (const expense of visibleExpenses) {
@@ -166,7 +256,7 @@ export function buildExpenseDashboard(input: {
   );
 
   const expensesByProjectJson: Record<string, SerializedExpense[]> = {};
-  for (const row of rows) {
+  for (const row of [...rows, ...executionRows]) {
     expensesByProjectJson[row.projectId] = (
       expensesByProject.get(row.projectId) ?? []
     ).map(serializeExpense);
@@ -178,6 +268,9 @@ export function buildExpenseDashboard(input: {
     expenseAmount,
     result: originalAmount - expenseAmount,
     rows,
+    executionProjectCount: executionRows.length,
+    executionExpenseAmount,
+    executionRows,
     buckets,
     expensesByProject: expensesByProjectJson,
   };

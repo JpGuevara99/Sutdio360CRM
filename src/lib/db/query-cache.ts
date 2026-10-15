@@ -43,5 +43,14 @@ export function invalidateQueryCache(...keys: string[]): void {
     entries.clear();
     return;
   }
-  for (const key of keys) entries.delete(key);
+  for (const key of keys) {
+    if (key.endsWith("*")) {
+      const prefix = key.slice(0, -1);
+      for (const entryKey of entries.keys()) {
+        if (entryKey.startsWith(prefix)) entries.delete(entryKey);
+      }
+    } else {
+      entries.delete(key);
+    }
+  }
 }

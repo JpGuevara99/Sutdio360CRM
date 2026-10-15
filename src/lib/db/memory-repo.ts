@@ -1542,6 +1542,16 @@ export async function listQuotesByProject(
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 }
 
+export async function listQuotesByProjectIds(
+  projectIds: string[],
+): Promise<Quote[]> {
+  const store = await load();
+  const projectIdSet = new Set(projectIds);
+  return store.quotes
+    .filter((quote) => projectIdSet.has(quote.projectId))
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+}
+
 export async function listRecentQuotes(
   limit = 50,
 ): Promise<QuoteWithProject[]> {

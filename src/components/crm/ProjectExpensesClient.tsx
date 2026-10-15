@@ -15,6 +15,7 @@ import type {
   ExpenseDashboard,
   ExpenseGranularity,
   ExpenseProjectRow,
+  ExecutionExpenseProjectRow,
   SerializedExpense,
 } from "@/lib/crm/project-expense-metrics";
 import type { ProjectExpenseCategory } from "@/lib/crm/types";
@@ -83,6 +84,7 @@ export function ProjectExpensesClient({
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [pickerProjectId, setPickerProjectId] = useState("");
+  const eligibleProjects = [...data.rows, ...data.executionRows];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,12 +113,17 @@ export function ProjectExpensesClient({
   }, [from, to, query, granularity]);
 
   useEffect(() => {
+    // Keep dashboard data synchronized with its filter state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
   const selectedRow = useMemo(
-    () => data.rows.find((row) => row.projectId === selectedId) ?? null,
-    [data.rows, selectedId],
+    () =>
+      data.rows.find((row) => row.projectId === selectedId) ??
+      data.executionRows.find((row) => row.projectId === selectedId) ??
+      null,
+    [data.rows, data.executionRows, selectedId],
   );
   const selectedExpenses = selectedId
     ? (data.expensesByProject[selectedId] ?? [])
@@ -138,7 +145,9 @@ export function ProjectExpensesClient({
     setForm(emptyExpenseForm());
     setFormError(null);
     setPickerProjectId(
-      projectId === "picker" ? (data.rows[0]?.projectId ?? "") : "",
+      projectId === "picker"
+        ? (eligibleProjects[0]?.projectId ?? "")
+        : "",
     );
   }
 
@@ -234,7 +243,7 @@ export function ProjectExpensesClient({
         </p>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Proyectos concretados"
           value={String(data.projectCount)}
@@ -248,6 +257,10 @@ export function ProjectExpensesClient({
           label="Resultado"
           value={formatClp(data.result)}
           tone={data.result >= 0 ? "good" : "bad"}
+        />
+        <StatCard
+          label="Gastos en ejecución"
+          value={formatClp(data.executionExpenseAmount)}
         />
       </section>
 
@@ -323,24 +336,29 @@ export function ProjectExpensesClient({
         </div>
 
         {data.buckets.length > 0 ? (
-          <div className="mt-4 flex h-28 items-end gap-1.5">
-            {data.buckets.map((bucket) => (
-              <div
-                key={bucket.key}
-                className="flex min-w-0 flex-1 flex-col items-center gap-1"
-                title={`${bucket.label}: ${formatClp(bucket.amount)}`}
-              >
+          <div className="mt-4">
+            <p className="mb-2 text-xs text-muted">
+              Gastos del período en proyectos cerrados y en ejecución
+            </p>
+            <div className="flex h-28 items-end gap-1.5">
+              {data.buckets.map((bucket) => (
                 <div
-                  className="w-full rounded-t bg-[#1a73e8]/80"
-                  style={{
-                    height: `${Math.max(8, (bucket.amount / maxBucket) * 100)}%`,
-                  }}
-                />
-                <span className="truncate text-[10px] text-muted">
-                  {bucket.label}
-                </span>
-              </div>
-            ))}
+                  key={bucket.key}
+                  className="flex min-w-0 flex-1 flex-col items-center gap-1"
+                  title={`${bucket.label}: ${formatClp(bucket.amount)}`}
+                >
+                  <div
+                    className="w-full rounded-t bg-[#1a73e8]/80"
+                    style={{
+                      height: `${Math.max(8, (bucket.amount / maxBucket) * 100)}%`,
+                    }}
+                  />
+                  <span className="truncate text-[10px] text-muted">
+                    {bucket.label}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <p className="mt-4 text-sm text-muted">
@@ -350,6 +368,99 @@ export function ProjectExpensesClient({
         {loading ? (
           <p className="mt-2 text-xs text-muted">Actualizando…</p>
         ) : null}
+      </section>
+
+      <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-foreground">
+            Proyectos en ejecución con presupuesto aprobado (
+            {data.executionProjectCount})
+          </h2>
+          <p className="mt-1 text-xs text-muted">
+            Se muestran por separado; sus gastos no afectan el resultado de
+            proyectos cerrados.
+          </p>
+        </div>
+        {data.executionRows.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-muted">
+            No hay proyectos en ejecución con presupuesto aprobado en este
+            momento.
+          </p>
+        ) : (
+          <div className="crm-scroll overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-border bg-surface-muted/80 text-muted">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Proyecto</th>
+                  <th className="px-4 py-2.5 font-medium">Cliente</th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Presupuesto aprobado
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Gastos registrados
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Disponible
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Entradas
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Acciones
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.executionRows.map((row) => (
+                  <tr
+                    key={row.projectId}
+                    className="border-b border-border/70 last:border-b-0 hover:bg-surface-muted/70"
+                  >
+                    <td
+                      className="cursor-pointer px-4 py-2.5 font-medium text-primary"
+                      onClick={() => setSelectedId(row.projectId)}
+                    >
+                      {formatEntityCode(row.publicCode)}
+                    </td>
+                    <td
+                      className="cursor-pointer px-4 py-2.5 text-foreground"
+                      onClick={() => setSelectedId(row.projectId)}
+                    >
+                      {row.clientName}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      {formatClp(row.approvedBudget)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      {formatClp(row.totalExpenses)}
+                    </td>
+                    <td
+                      className={`px-4 py-2.5 text-right tabular-nums font-medium ${
+                        row.remainingBudget >= 0
+                          ? "text-emerald-600"
+                          : "text-danger"
+                      }`}
+                    >
+                      {formatClp(row.remainingBudget)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-muted">
+                      {row.expenseCount}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => openAdd(row.projectId)}
+                        className="rounded-full px-3 py-1 text-xs font-medium text-primary-text hover:bg-primary-soft"
+                      >
+                        + Agregar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
@@ -461,14 +572,31 @@ export function ProjectExpensesClient({
                   onChange={(e) => setPickerProjectId(e.target.value)}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-foreground outline-none focus:border-primary"
                 >
-                  {data.rows.length === 0 ? (
-                    <option value="">No hay proyectos concretados</option>
+                  {eligibleProjects.length === 0 ? (
+                    <option value="">No hay proyectos elegibles</option>
                   ) : (
-                    data.rows.map((row) => (
-                      <option key={row.projectId} value={row.projectId}>
-                        {formatEntityCode(row.publicCode)} · {row.clientName}
-                      </option>
-                    ))
+                    <>
+                      {data.rows.length > 0 ? (
+                        <optgroup label="Proyectos concretados">
+                          {data.rows.map((row) => (
+                            <option key={row.projectId} value={row.projectId}>
+                              {formatEntityCode(row.publicCode)} ·{" "}
+                              {row.clientName}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null}
+                      {data.executionRows.length > 0 ? (
+                        <optgroup label="En ejecución con presupuesto aprobado">
+                          {data.executionRows.map((row) => (
+                            <option key={row.projectId} value={row.projectId}>
+                              {formatEntityCode(row.publicCode)} ·{" "}
+                              {row.clientName}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null}
+                    </>
                   )}
                 </select>
               </label>
@@ -636,7 +764,7 @@ function ExpenseHistoryPanel({
   onEdit,
   onDelete,
 }: {
-  row: ExpenseProjectRow;
+  row: ExpenseProjectRow | ExecutionExpenseProjectRow;
   expenses: SerializedExpense[];
   onClose: () => void;
   onAdd: () => void;
@@ -672,24 +800,48 @@ function ExpenseHistoryPanel({
           </button>
         </header>
         <div className="space-y-3 border-b border-border px-5 py-4 text-sm">
-          <p className="flex justify-between gap-3">
-            <span className="text-muted">Original</span>
-            <span className="tabular-nums">{formatClp(row.closedAmount)}</span>
-          </p>
+          {row.kind === "closed" ? (
+            <p className="flex justify-between gap-3">
+              <span className="text-muted">Monto de cierre</span>
+              <span className="tabular-nums">
+                {formatClp(row.closedAmount)}
+              </span>
+            </p>
+          ) : (
+            <p className="flex justify-between gap-3">
+              <span className="text-muted">Presupuesto aprobado</span>
+              <span className="tabular-nums">
+                {formatClp(row.approvedBudget)}
+              </span>
+            </p>
+          )}
           <p className="flex justify-between gap-3">
             <span className="text-muted">Gastos</span>
             <span className="tabular-nums">{formatClp(row.totalExpenses)}</span>
           </p>
-          <p className="flex justify-between gap-3 font-medium">
-            <span>Resultado</span>
-            <span
-              className={`tabular-nums ${
-                row.netAmount >= 0 ? "text-emerald-600" : "text-danger"
-              }`}
-            >
-              {formatClp(row.netAmount)}
-            </span>
-          </p>
+          {row.kind === "closed" ? (
+            <p className="flex justify-between gap-3 font-medium">
+              <span>Resultado</span>
+              <span
+                className={`tabular-nums ${
+                  row.netAmount >= 0 ? "text-emerald-600" : "text-danger"
+                }`}
+              >
+                {formatClp(row.netAmount)}
+              </span>
+            </p>
+          ) : (
+            <p className="flex justify-between gap-3 font-medium">
+              <span>Disponible</span>
+              <span
+                className={`tabular-nums ${
+                  row.remainingBudget >= 0 ? "text-emerald-600" : "text-danger"
+                }`}
+              >
+                {formatClp(row.remainingBudget)}
+              </span>
+            </p>
+          )}
           <Link
             href={`/proyectos/${row.projectId}`}
             className="inline-block text-sm text-primary hover:underline"

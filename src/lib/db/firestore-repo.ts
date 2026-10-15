@@ -1919,6 +1919,32 @@ export async function listQuotesByProject(
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 }
 
+export async function listQuotesByProjectIds(
+  projectIds: string[],
+): Promise<Quote[]> {
+  const uniqueIds = [...new Set(projectIds)].sort();
+  if (uniqueIds.length === 0) return [];
+
+  return cachedRead(`quotes:projects:${uniqueIds.join(",")}`, async () => {
+    const db = getAdminDb();
+    const snaps = await Promise.all(
+      Array.from({ length: Math.ceil(uniqueIds.length / 30) }, (_, index) =>
+        db
+          .collection("quotes")
+          .where(
+            "projectId",
+            "in",
+            uniqueIds.slice(index * 30, (index + 1) * 30),
+          )
+          .get(),
+      ),
+    );
+    return snaps.flatMap((snap) =>
+      snap.docs.map((doc) => mapQuote(doc.id, doc.data())),
+    );
+  });
+}
+
 export async function listRecentQuotes(
   limit = 50,
 ): Promise<QuoteWithProject[]> {
